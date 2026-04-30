@@ -3,18 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OTP Verification</title>
+    <title>iCash OTP Verification</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #101828;
-            --panel: #ffffff;
-            --text: #111827;
-            --muted: #667085;
-            --line: #d0d5dd;
-            --primary: #2563eb;
-            --primary-hover: #1d4ed8;
-            --success: #16a34a;
-            --error: #dc2626;
+            --sky-1: #bfe8ff;
+            --sky-2: #8fd0ff;
+            --sky-3: #4f9fee;
+            --surface: rgba(255, 255, 255, 0.82);
+            --surface-strong: rgba(255, 255, 255, 0.94);
+            --text: #13304b;
+            --muted: #5d7e9a;
+            --line: rgba(111, 169, 219, 0.38);
+            --primary: #1f87ea;
+            --primary-hover: #156fc8;
+            --success: #129663;
+            --success-bg: #eafbf4;
+            --success-line: #b7efd7;
+            --error: #c43d44;
+            --error-bg: #fff1f2;
+            --error-line: #f6c7cb;
+            --shadow: 0 28px 60px rgba(24, 90, 146, 0.22);
         }
 
         * {
@@ -24,172 +35,482 @@
         body {
             margin: 0;
             min-height: 100vh;
+            font-family: "Plus Jakarta Sans", "Tahoma", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(255, 255, 255, 0.55), transparent 30%),
+                radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.2), transparent 28%),
+                linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 42%, var(--sky-3) 100%);
+            overflow-x: hidden;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 0;
+            filter: blur(10px);
+        }
+
+        body::before {
+            width: 340px;
+            height: 340px;
+            top: -120px;
+            right: -90px;
+            background: rgba(255, 255, 255, 0.22);
+        }
+
+        body::after {
+            width: 280px;
+            height: 280px;
+            left: -90px;
+            bottom: -90px;
+            background: rgba(17, 115, 197, 0.18);
+        }
+
+        .page {
+            position: relative;
+            z-index: 1;
+            min-height: 100vh;
             display: grid;
             place-items: center;
-            background: var(--bg);
-            color: var(--text);
-            font-family: Arial, "Tahoma", sans-serif;
+            padding: 32px 18px;
         }
 
-        .container {
-            width: min(420px, calc(100vw - 32px));
+        .workspace {
+            width: min(1080px, 100%);
+            display: grid;
+            grid-template-columns: minmax(0, 1.1fr) minmax(340px, 420px);
+            gap: 18px;
+            align-items: stretch;
         }
 
-        .card {
-            background: var(--panel);
-            border-radius: 8px;
-            padding: 28px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+        .brand-panel,
+        .auth-panel {
+            border: 1px solid rgba(255, 255, 255, 0.38);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            box-shadow: var(--shadow);
         }
 
-        h1 {
+        .brand-panel {
+            background: linear-gradient(160deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.34));
+            border-radius: 28px;
+            padding: 34px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 660px;
+        }
+
+        .brand-top {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand-mark {
+            width: 84px;
+            height: 84px;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.7);
+            display: grid;
+            place-items: center;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+        }
+
+        .brand-mark img {
+            width: 66px;
+            height: 66px;
+            object-fit: contain;
+        }
+
+        .brand-eyebrow {
             margin: 0 0 6px;
-            font-size: 26px;
-            line-height: 1.25;
+            font-size: 12px;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: #4178a6;
+            font-weight: 800;
         }
 
-        .subtitle {
-            margin: 0 0 24px;
+        .brand-title {
+            margin: 0;
+            font-size: clamp(36px, 5vw, 62px);
+            line-height: 0.96;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            color: #ffffff;
+            text-shadow: 0 14px 34px rgba(17, 85, 136, 0.26);
+        }
+
+        .brand-copy {
+            max-width: 540px;
+            margin: 22px 0 0;
+            font-size: 18px;
+            line-height: 1.75;
+            color: #eff8ff;
+            text-wrap: balance;
+        }
+
+        .brand-steps {
+            display: grid;
+            gap: 12px;
+            margin-top: 26px;
+        }
+
+        .step {
+            display: grid;
+            grid-template-columns: 46px minmax(0, 1fr);
+            gap: 14px;
+            align-items: start;
+            padding: 16px 18px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 18px;
+        }
+
+        .step-number {
+            width: 46px;
+            height: 46px;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.82);
+            color: var(--primary);
+            font-size: 16px;
+            font-weight: 800;
+        }
+
+        .step strong {
+            display: block;
+            margin-bottom: 4px;
+            color: #ffffff;
+            font-size: 15px;
+        }
+
+        .step span {
+            color: rgba(255, 255, 255, 0.84);
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .brand-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-top: 28px;
+            padding-top: 18px;
+            border-top: 1px solid rgba(255, 255, 255, 0.18);
+            color: rgba(255, 255, 255, 0.76);
+            font-size: 13px;
+        }
+
+        .auth-panel {
+            background: var(--surface);
+            border-radius: 28px;
+            padding: 26px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .auth-header {
+            margin-bottom: 24px;
+        }
+
+        .panel-kicker {
+            display: inline-flex;
+            align-items: center;
+            min-height: 32px;
+            padding: 0 12px;
+            border-radius: 999px;
+            background: rgba(31, 135, 234, 0.1);
+            color: var(--primary);
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .auth-header h1 {
+            margin: 16px 0 8px;
+            font-size: 28px;
+            line-height: 1.15;
+            letter-spacing: -0.03em;
+        }
+
+        .auth-header p {
+            margin: 0;
             color: var(--muted);
             font-size: 14px;
+            line-height: 1.75;
         }
 
-        .form-group {
+        .field-group {
             margin-bottom: 16px;
         }
 
         label {
             display: block;
             margin-bottom: 8px;
-            color: #344054;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 700;
+            color: #34506b;
+        }
+
+        .field-shell {
+            position: relative;
         }
 
         input {
             width: 100%;
-            min-height: 46px;
-            padding: 10px 12px;
+            min-height: 54px;
+            padding: 0 16px;
             border: 1px solid var(--line);
-            border-radius: 8px;
-            font-size: 16px;
+            border-radius: 16px;
+            background: var(--surface-strong);
+            color: var(--text);
+            font: inherit;
+            font-size: 15px;
             outline: none;
+            transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+        }
+
+        input::placeholder {
+            color: #8aa6bf;
         }
 
         input:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+            border-color: rgba(31, 135, 234, 0.7);
+            box-shadow: 0 0 0 4px rgba(31, 135, 234, 0.12);
+            transform: translateY(-1px);
         }
 
         button {
             width: 100%;
-            min-height: 46px;
+            min-height: 56px;
+            border: 0;
+            border-radius: 16px;
+            background: linear-gradient(180deg, #34a2ff 0%, #1578da 100%);
+            color: #ffffff;
+            font: inherit;
+            font-size: 15px;
+            font-weight: 800;
+            letter-spacing: 0.01em;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
-            border: 0;
-            border-radius: 8px;
-            background: var(--primary);
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
+            gap: 10px;
             cursor: pointer;
+            box-shadow: 0 18px 28px rgba(31, 135, 234, 0.22);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
         }
 
         button:hover:not(:disabled) {
-            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 22px 34px rgba(31, 135, 234, 0.28);
+            filter: saturate(1.05);
         }
 
         button:disabled {
             cursor: not-allowed;
-            opacity: 0.65;
+            opacity: 0.72;
+            box-shadow: none;
         }
 
         #verify-section {
             display: none;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #eaecf0;
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(146, 187, 223, 0.28);
         }
 
         .status-msg {
             display: none;
-            margin-top: 16px;
-            padding: 12px;
-            border-radius: 8px;
+            margin-top: 18px;
+            padding: 14px 16px;
+            border-radius: 16px;
             font-size: 14px;
-            line-height: 1.5;
+            line-height: 1.65;
             white-space: pre-line;
         }
 
         .status-msg.success {
             display: block;
-            background: #ecfdf3;
-            color: #067647;
-            border: 1px solid #abefc6;
+            background: var(--success-bg);
+            border: 1px solid var(--success-line);
+            color: var(--success);
         }
 
         .status-msg.error {
             display: block;
-            background: #fef3f2;
-            color: #b42318;
-            border: 1px solid #fecdca;
+            background: var(--error-bg);
+            border: 1px solid var(--error-line);
+            color: var(--error);
+        }
+
+        .note {
+            margin-top: 16px;
+            color: #5e83a3;
+            font-size: 12px;
+            line-height: 1.7;
         }
 
         .loader {
             width: 18px;
             height: 18px;
             display: none;
-            border: 2px solid white;
+            border: 2px solid rgba(255, 255, 255, 0.92);
             border-bottom-color: transparent;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
 
-        .footer {
-            margin-top: 16px;
-            color: #cbd5e1;
-            text-align: center;
-            font-size: 12px;
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
         }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        @media (max-width: 920px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+
+            .brand-panel {
+                min-height: auto;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .page {
+                padding: 18px 14px;
+            }
+
+            .brand-panel,
+            .auth-panel {
+                border-radius: 22px;
+                padding: 22px;
+            }
+
+            .brand-top {
+                align-items: flex-start;
+            }
+
+            .brand-mark {
+                width: 72px;
+                height: 72px;
+                border-radius: 18px;
+            }
+
+            .brand-mark img {
+                width: 56px;
+                height: 56px;
+            }
+
+            .brand-copy {
+                font-size: 16px;
+            }
+
+            .brand-footer {
+                flex-direction: column;
+                align-items: flex-start;
+            }
         }
     </style>
 </head>
 <body>
-    <main class="container">
-        <section class="card">
-            <h1>ยืนยันตัวตน</h1>
-            <p class="subtitle">ทดสอบการขอและยืนยันรหัส OTP ก่อนเชื่อมต่อ SMS จริง</p>
+    <main class="page">
+        <section class="workspace">
+            <section class="brand-panel">
+                <div>
+                    <div class="brand-top">
+                        <div class="brand-mark">
+                            <img src="/assets/icash-logo-b.png" alt="iCash logo">
+                        </div>
+                        <div>
+                            <p class="brand-eyebrow">iCash Security</p>
+                            <h2 class="brand-title">OTP Access<br>for iCash</h2>
+                        </div>
+                    </div>
 
-            <div id="request-section">
-                <div class="form-group">
-                    <label for="phone">เบอร์โทรศัพท์</label>
-                    <input type="tel" id="phone" placeholder="0971234567 หรือ +855971234567" maxlength="16" autocomplete="tel">
+                    <p class="brand-copy">
+                        ยืนยันตัวตนอย่างปลอดภัยผ่านรหัส OTP เพื่อเข้าใช้งานระบบ iCash ได้อย่างมั่นใจ
+                        ทั้งในขั้นตอนทดสอบและการเชื่อมต่อใช้งานจริง
+                    </p>
+
+                    <div class="brand-steps">
+                        <div class="step">
+                            <div class="step-number">01</div>
+                            <div>
+                                <strong>กรอกเบอร์โทรศัพท์</strong>
+                                <span>รองรับเบอร์กัมพูชาแบบ local หรือรูปแบบสากล E.164</span>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div class="step-number">02</div>
+                            <div>
+                                <strong>รับรหัส OTP</strong>
+                                <span>ระบบจะส่งรหัสผ่านผู้ให้บริการ SMS ที่ตั้งค่าไว้ในระบบ</span>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div class="step-number">03</div>
+                            <div>
+                                <strong>ยืนยันเพื่อเข้าใช้งาน</strong>
+                                <span>กรอกรหัส 6 หลักเพื่อปิดขั้นตอนยืนยันตัวตนให้สมบูรณ์</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <button id="btn-request" type="button" onclick="handleRequestOTP()">
-                    <span class="loader" id="loader-request"></span>
-                    <span id="text-request">ขอรหัส OTP</span>
-                </button>
-            </div>
 
-            <div id="verify-section">
-                <div class="form-group">
-                    <label for="otp">รหัส OTP 6 หลัก</label>
-                    <input type="text" id="otp" placeholder="123456" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+                <div class="brand-footer">
+                    <span>Secure sign-in experience for internal testing</span>
+                    <span>OTP Backend Service</span>
                 </div>
-                <button id="btn-verify" type="button" onclick="handleVerifyOTP()">
-                    <span class="loader" id="loader-verify"></span>
-                    <span id="text-verify">ยืนยันรหัส</span>
-                </button>
-            </div>
+            </section>
 
-            <div id="status" class="status-msg"></div>
+            <section class="auth-panel">
+                <div class="auth-header">
+                    <span class="panel-kicker">Verification</span>
+                    <h1>ยืนยันตัวตนเพื่อเข้าสู่ระบบ</h1>
+                    <p>กรอกเบอร์โทรศัพท์เพื่อขอรหัส OTP จากนั้นกรอกรหัส 6 หลักที่ได้รับเพื่อยืนยันตัวตน</p>
+                </div>
+
+                <div id="request-section">
+                    <div class="field-group">
+                        <label for="phone">เบอร์โทรศัพท์</label>
+                        <div class="field-shell">
+                            <input type="tel" id="phone" placeholder="0971234567 หรือ +855971234567" maxlength="16" autocomplete="tel">
+                        </div>
+                    </div>
+                    <button id="btn-request" type="button" onclick="handleRequestOTP()">
+                        <span class="loader" id="loader-request"></span>
+                        <span id="text-request">ขอรหัส OTP</span>
+                    </button>
+                </div>
+
+                <div id="verify-section">
+                    <div class="field-group">
+                        <label for="otp">รหัส OTP 6 หลัก</label>
+                        <div class="field-shell">
+                            <input type="text" id="otp" placeholder="123456" maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+                        </div>
+                    </div>
+                    <button id="btn-verify" type="button" onclick="handleVerifyOTP()">
+                        <span class="loader" id="loader-verify"></span>
+                        <span id="text-verify">ยืนยันรหัส</span>
+                    </button>
+                </div>
+
+                <div id="status" class="status-msg"></div>
+                <p class="note">สำหรับการทดสอบจริง ผู้ให้บริการ SMS และสิทธิ์การส่งจะขึ้นอยู่กับ environment ที่ตั้งค่าไว้บนระบบ</p>
+            </section>
         </section>
-        <div class="footer">OTP Backend Service</div>
     </main>
 
     <script>
@@ -207,7 +528,7 @@
             const button = document.getElementById(`btn-${type}`);
 
             loader.style.display = isLoading ? "inline-block" : "none";
-            text.style.opacity = isLoading ? "0.55" : "1";
+            text.style.opacity = isLoading ? "0.58" : "1";
             button.disabled = isLoading || button.dataset.locked === "true";
         }
 
@@ -282,7 +603,7 @@
                 showStatus(data.message || "ยืนยันรหัส OTP สำเร็จ");
                 const verifyButton = document.getElementById("btn-verify");
                 verifyButton.dataset.locked = "true";
-                verifyButton.style.background = "var(--success)";
+                verifyButton.style.background = "linear-gradient(180deg, #21b67a 0%, #11945f 100%)";
                 otpInput.disabled = true;
             } catch (error) {
                 showStatus("ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้", true);
