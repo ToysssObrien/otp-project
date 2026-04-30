@@ -40,6 +40,13 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["10/minute"])
 async def lifespan(app: FastAPI):
     # Connect to Redis using fakeredis
     app.state.redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    print(
+        "--- OTP CONFIG --- "
+        f"provider={OTP_PROVIDER}, "
+        f"dev_mode={DEV_OTP_MODE}, "
+        f"infobip_key_present={'yes' if bool(os.getenv('INFOBIP_API_KEY')) else 'no'}, "
+        f"twilio_sid_present={'yes' if bool(os.getenv('TWILIO_ACCOUNT_SID')) else 'no'}"
+    )
     yield
     # Close connection
     await app.state.redis.close()
