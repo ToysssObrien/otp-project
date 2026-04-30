@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+redis
+slowapi
+fakeredis
+twilio
+python-dotenv
+plivo
+boto3
