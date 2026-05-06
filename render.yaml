@@ -1,4 +1,12 @@
 services:
+  - type: keyvalue
+    name: otp-redis
+    plan: starter
+    region: singapore
+    ipAllowList:
+      - source: 0.0.0.0/32
+        description: blocked-public-access
+    maxmemoryPolicy: noeviction
   - type: web
     name: otp-project
     runtime: python
@@ -61,11 +69,3 @@ services:
         value: "ServiceSMS"
       - key: INFOBIP_API_KEY
         sync: false
-  - type: keyvalue
-    name: otp-redis
-    plan: starter
-    region: singapore
-    ipAllowList:
-      - source: 0.0.0.0/32
-        description: blocked-public-access
-    maxmemoryPolicy: noeviction
