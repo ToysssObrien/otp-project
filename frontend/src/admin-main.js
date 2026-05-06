@@ -334,11 +334,13 @@ createApp({
     const customerFileInput = ref(null);
     const refreshTimer = ref(null);
     const countdownTimer = ref(null);
+    const popupTimer = ref(null);
 
     const state = reactive({
       authResolved: false,
       authenticated: false,
       loading: false,
+      verifyBusy: false,
       activeSection: "dashboard",
       metrics: null,
       customers: [],
@@ -355,6 +357,11 @@ createApp({
         name: "",
         phone_number: "",
         otp: ""
+      },
+      verifyPopup: {
+        open: false,
+        mode: "loading",
+        message: ""
       },
       status: {
         login: { message: "", messageKey: "", messageParams: {}, type: "error" },
@@ -419,6 +426,34 @@ createApp({
       state.status[scope] = { message: "", messageKey: "", messageParams: {}, type: "success" };
     }
 
+    function clearVerifyPopupTimer() {
+      if (popupTimer.value) {
+        window.clearTimeout(popupTimer.value);
+        popupTimer.value = null;
+      }
+    }
+
+    function showVerifyPopup(mode, message) {
+      clearVerifyPopupTimer();
+      state.verifyPopup.open = true;
+      state.verifyPopup.mode = mode;
+      state.verifyPopup.message = message;
+    }
+
+    function hideVerifyPopup() {
+      clearVerifyPopupTimer();
+      state.verifyPopup.open = false;
+      state.verifyPopup.mode = "loading";
+      state.verifyPopup.message = "";
+    }
+
+    function showVerifySuccessPopup(message) {
+      showVerifyPopup("success", message);
+      popupTimer.value = window.setTimeout(() => {
+        hideVerifyPopup();
+      }, 1800);
+    }
+
     function getStatusMessage(scope) {
       const status = state.status[scope] || {};
       if (status.messageKey) {
@@ -469,8 +504,10 @@ createApp({
       state.verifyForm.phone_number = "";
       state.verifyForm.otp = "";
       state.verifyStepReady = false;
+      state.verifyBusy = false;
       state.editingCustomerId = null;
       clearStatus("verify");
+      hideVerifyPopup();
       stopCountdown();
     }
 
@@ -658,6 +695,9 @@ createApp({
         return;
       }
 
+      state.verifyBusy = true;
+      showVerifyPopup("loading", "Verifying OTP...");
+
       try {
         const response = await fetch("/api/verify-otp", {
           method: "POST",
@@ -667,6 +707,7 @@ createApp({
         const data = await parseResponse(response);
         if (response.ok) {
           setLocalizedStatus("verify", "verify_success", "success");
+          showVerifySuccessPopup("OTP verified successfully.");
           await nextTick();
           try {
             await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
@@ -675,10 +716,14 @@ createApp({
             console.error(error);
           }
         } else {
+          hideVerifyPopup();
           setStatus("verify", getFetchErrorMessage(data, "-"), "error");
         }
       } catch (error) {
+        hideVerifyPopup();
         setStatus("verify", error?.message || "-", "error");
+      } finally {
+        state.verifyBusy = false;
       }
     }
 
@@ -757,6 +802,7 @@ createApp({
       window.removeEventListener("hashchange", syncSectionFromHash);
       stopRefreshTimer();
       stopCountdown();
+      clearVerifyPopupTimer();
     });
 
     return {
@@ -980,9 +1026,9 @@ createApp({
                 </div>
 
                 <div class="button-row">
-                  <button type="button" class="ghost-button" @click="saveVerifyCustomerRecord()">{{ text.btn_save_customer }}</button>
-                  <button type="button" class="button" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
-                  <button type="button" class="ghost-button" @click="resetVerifyForm">{{ text.btn_reset }}</button>
+                  <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="saveVerifyCustomerRecord()">{{ text.btn_save_customer }}</button>
+                  <button type="button" class="button" :disabled="state.verifyBusy" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
+                  <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="resetVerifyForm">{{ text.btn_reset }}</button>
                 </div>
 
                 <div v-if="state.verifyStepReady">
@@ -992,7 +1038,7 @@ createApp({
                     <div>{{ text.expires_in }}: <strong>{{ verifyCountdownText }}</strong></div>
                   </div>
                   <div class="button-row">
-                    <button type="button" class="button" @click="verifyStaffOtp">{{ text.btn_verify_otp }}</button>
+                    <button type="button" class="button" :disabled="state.verifyBusy" @click="verifyStaffOtp">{{ text.btn_verify_otp }}</button>
                   </div>
                 </div>
 
@@ -1059,6 +1105,19 @@ createApp({
                 </div>
               </article>
             </section>
+
+            <transition name="verify-fade">
+              <div v-if="state.verifyPopup.open" class="popup-overlay" :class="state.verifyPopup.mode" role="status" aria-live="polite" aria-modal="true">
+                <div class="popup-card glass">
+                  <div v-if="state.verifyPopup.mode === 'loading'" class="popup-spinner" aria-hidden="true"></div>
+                  <div v-else class="popup-check" aria-hidden="true">✓</div>
+                  <div class="popup-title">
+                    {{ state.verifyPopup.mode === 'loading' ? 'Loading' : 'Success' }}
+                  </div>
+                  <div class="popup-message">{{ state.verifyPopup.message }}</div>
+                </div>
+              </div>
+            </transition>
           </main>
         </div>
       </div>
