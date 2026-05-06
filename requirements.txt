@@ -7,3 +7,6 @@ twilio
 python-dotenv
 plivo
 boto3
+httpx
+google-auth
+requests

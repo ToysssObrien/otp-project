@@ -2,19 +2,70 @@ services:
   - type: web
     name: otp-project
     runtime: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    region: singapore
+    healthCheckPath: /health
+    buildCommand: pip install -r requirements.txt && npm ci && npm run build
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers
     envVars:
       - key: DEV_OTP_MODE
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      - key: USE_FAKE_REDIS
         value: "false"
       - key: DEFAULT_COUNTRY_CODE
         value: "855"
       - key: OTP_PROVIDER
         value: "infobip"
+      - key: OTP_TTL_SECONDS
+        value: "300"
+      - key: REQUEST_OTP_COOLDOWN_SECONDS
+        value: "60"
+      - key: VERIFY_OTP_MAX_ATTEMPTS
+        value: "5"
+      - key: ADMIN_DASHBOARD_ENABLED
+        value: "true"
+      - key: ADMIN_DASHBOARD_USERNAME
+        sync: false
+      - key: ADMIN_DASHBOARD_PASSWORD
+        sync: false
+      - key: ADMIN_DASHBOARD_REALM
+        value: "OTP Admin Monitor"
+      - key: ADMIN_SESSION_COOKIE_NAME
+        value: "otp_admin_session"
+      - key: ADMIN_SESSION_DURATION_SECONDS
+        value: "28800"
+      - key: ADMIN_SESSION_COOKIE_SECURE
+        value: "true"
+      - key: ADMIN_SESSION_SECRET
+        sync: false
+      - key: REQUEST_OTP_RATE_LIMIT
+        value: "1/minute"
+      - key: VERIFY_OTP_RATE_LIMIT
+        value: "10/minute"
+      - key: METRICS_EVENT_LIMIT
+        value: "200"
+      - key: METRICS_TOP_LIMIT
+        value: "10"
+      - key: PROVIDER_FAILURE_WINDOW_SECONDS
+        value: "900"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: otp-redis
+          property: connectionString
       - key: INFOBIP_BASE_URL
         value: "https://api.infobip.com"
       - key: INFOBIP_SENDER
         value: "ServiceSMS"
       - key: INFOBIP_API_KEY
         sync: false
+  - type: keyvalue
+    name: otp-redis
+    plan: starter
+    region: singapore
+    ipAllowList:
+      - source: 0.0.0.0/32
+        description: blocked-public-access
+    maxmemoryPolicy: noeviction
