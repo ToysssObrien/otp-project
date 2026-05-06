@@ -224,6 +224,49 @@ createApp({
       state.status[scope] = { message: "", messageKey: "", messageParams: {}, type: "success" };
     }
 
+    function formatDuration(seconds) {
+      const total = Math.max(0, Number(seconds) || 0);
+      const minutes = Math.floor(total / 60);
+      const remainingSeconds = total % 60;
+      return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+    }
+
+    function currentIsoTimestamp() {
+      return new Date().toISOString();
+    }
+
+    function formatCustomerTimestamp(timestamp, lang = "en") {
+      if (!timestamp) {
+        return "-";
+      }
+
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) {
+        return String(timestamp);
+      }
+
+      const locale = lang === "kh" ? "km-KH" : lang === "th" ? "th-TH" : "en-US";
+      return new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(date);
+    }
+
+    function getVerifyPopupTitle(mode) {
+      return mode === "loading" ? text.value.popup_loading : text.value.popup_success;
+    }
+
+    function getVerifyLoadingMessage() {
+      return text.value.verify_loading_message;
+    }
+
+    function getVerifySuccessMessage() {
+      return text.value.verify_success_message;
+    }
+
     function clearVerifyPopupTimer() {
       if (popupTimer.value) {
         window.clearTimeout(popupTimer.value);
@@ -250,6 +293,57 @@ createApp({
       popupTimer.value = window.setTimeout(() => {
         hideVerifyPopup();
       }, 1800);
+    }
+
+    function parseCsvText(csvText) {
+      const lines = String(csvText || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (!lines.length) {
+        return [];
+      }
+
+      const headers = lines.shift().split(",").map((header) => header.trim());
+      return lines.map((line) => {
+        const values = line.split(",");
+        return headers.reduce((row, header, index) => {
+          row[header] = (values[index] ?? "").trim();
+          return row;
+        }, {});
+      });
+    }
+
+    function escapeCsvValue(value) {
+      const textValue = String(value ?? "");
+      if (/[",\n\r]/.test(textValue)) {
+        return `"${textValue.replace(/"/g, '""')}"`;
+      }
+      return textValue;
+    }
+
+    function downloadBlob(fileName, content, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function convertImportedRows(rawRows) {
+      return rawRows.map((row) => {
+        const id = String(row.ID || row.id || row.CustomerID || row.customer_id || "").trim();
+        const name = String(row.Name || row.name || row.CustomerName || row.customer_name || "").trim();
+        const phone_number = String(row.PhoneNumber || row.phone_number || row.phone || "").trim();
+        const otp = String(row.OTP || row.otp || "").trim();
+        const timestamp = String(row.Timestamp || row.timestamp || currentIsoTimestamp()).trim() || currentIsoTimestamp();
+        return { id, name, phone_number, otp, timestamp };
+      }).filter((row) => row.id || row.name || row.phone_number || row.otp);
     }
 
     function getStatusMessage(scope) {
