@@ -1356,44 +1356,10 @@ async def build_metrics_snapshot(request: Request, redis_client: redis.Redis) ->
 
 # --- Translations ---
 BACKEND_TRANSLATIONS = {
-    "en": {
-        "otp_message": "Your OTP code is: {otp_code}. It is valid for {minutes} minutes.",
-        "otp_sent": "OTP has been sent to {phone}",
-        "otp_verified": "OTP verified successfully.",
-        "otp_invalid": "Invalid OTP code. {remaining} attempt(s) remaining.",
-        "otp_expired": "OTP not found or has expired. Please request a new one.",
-        "otp_locked": "Too many invalid OTP attempts. Please request a new OTP.",
-        "cooldown": "OTP was already requested recently. Please wait {seconds} seconds and try again.",
-        "ref_expired": "Reference code not found or has expired. Please request a new OTP.",
-        "ref_invalid": "Invalid reference code.",
-        "phone_invalid": "Invalid phone number. Use local format like 0971234567 or international format."
-    },
-    "th": {
-        "otp_message": "รหัส OTP ของคุณคือ: {otp_code} (ใช้งานได้นาน {minutes} นาที)",
-        "otp_sent": "ส่งรหัส OTP ไปยัง {phone} สำเร็จ",
-        "otp_verified": "ยืนยันรหัส OTP สำเร็จ",
-        "otp_invalid": "รหัส OTP ไม่ถูกต้อง เหลือโอกาสอีก {remaining} ครั้ง",
-        "otp_expired": "ไม่พบรหัส OTP หรือรหัสหมดอายุแล้ว กรุณาขอรหัสใหม่",
-        "otp_locked": "กรอกรหัสผิดเกินจำนวนครั้งที่กำหนด กรุณาขอรหัส OTP ใหม่",
-        "cooldown": "คุณเพิ่งขอรหัส OTP ไปเมื่อครู่ กรุณารอ {seconds} วินาทีแล้วลองใหม่",
-        "ref_expired": "รหัสอ้างอิงไม่ถูกต้องหรือหมดอายุแล้ว กรุณาขอ OTP ใหม่",
-        "ref_invalid": "รหัสอ้างอิงไม่ถูกต้อง",
-        "phone_invalid": "เบอร์โทรศัพท์ไม่ถูกต้อง กรุณาใช้รูปแบบ 0971234567 หรือแบบสากល"
-    },
-    "kh": {
-        "otp_message": "កូដ OTP របស់អ្នកគឺ: {otp_code}។ មានសុពលភាពរយៈពេល {minutes} នាទី។",
-        "otp_sent": "កូដ OTP ត្រូវបានផ្ញើទៅកាន់ {phone}",
-        "otp_verified": "ការផ្ទៀងផ្ទាត់កូដ OTP បានជោគជ័យ។",
-        "otp_invalid": "កូដ OTP មិនត្រឹមត្រូវ។ នៅសល់ការសាកល្បង {remaining} ដងទៀត។",
-        "otp_expired": "រកមិនឃើញកូដ OTP ឬកូដបានហួសសុពលភាព។ សូមស្នើសុំកូដថ្មី។",
-        "otp_locked": "ការសាកល្បងកូដខុសច្រើនដងពេក។ សូមស្នើសុំកូដ OTP ថ្មី។",
-        "cooldown": "អ្នកបានស្នើសុំកូដ OTP រួចហើយ។ សូមរង់ចាំ {seconds} វិនាទី រួចព្យាយាមម្តងទៀត។",
-        "ref_expired": "រកមិនឃើញកូដយោង ឬបានហួសសុពលភាព។ សូមស្នើសុំកូដ OTP ថ្មី។",
-        "ref_invalid": "កូដយោងមិនត្រឹមត្រូវ។",
-        "phone_invalid": "លេខទូរស័ព្ទមិនត្រឹមត្រូវ។ សូមប្រើទម្រង់ដូចជា 0971234567 ឬទម្រង់អន្តរជាតិ។"
-    }
+    "en": {'otp_message': 'Your OTP code is: {otp_code}. It is valid for {minutes} minutes.', 'otp_sent': 'OTP has been sent to {phone}', 'otp_verified': 'OTP verified successfully.', 'otp_invalid': 'Invalid OTP code. {remaining} attempt(s) remaining.', 'otp_expired': 'OTP not found or has expired. Please request a new one.', 'otp_locked': 'Too many invalid OTP attempts. Please request a new OTP.', 'cooldown': 'OTP was already requested recently. Please wait {seconds} seconds and try again.', 'ref_expired': 'Reference code not found or has expired. Please request a new OTP.', 'ref_invalid': 'Invalid reference code.', 'phone_invalid': 'Invalid phone number. Use local format like 0971234567 or international format.'},
+    "th": {'otp_message': 'Your OTP code is: {otp_code}. It is valid for {minutes} minutes.', 'otp_sent': 'OTP has been sent to {phone}', 'otp_verified': 'OTP verified successfully.', 'otp_invalid': 'Invalid OTP code. {remaining} attempt(s) remaining.', 'otp_expired': 'OTP not found or has expired. Please request a new one.', 'otp_locked': 'Too many invalid OTP attempts. Please request a new OTP.', 'cooldown': 'OTP was already requested recently. Please wait {seconds} seconds and try again.', 'ref_expired': 'Reference code not found or has expired. Please request a new OTP.', 'ref_invalid': 'Invalid reference code.', 'phone_invalid': 'Invalid phone number. Use local format like 0971234567 or international format.'},
+    "kh": {'otp_message': 'Your OTP code is: {otp_code}. It is valid for {minutes} minutes.', 'otp_sent': 'OTP has been sent to {phone}', 'otp_verified': 'OTP verified successfully.', 'otp_invalid': 'Invalid OTP code. {remaining} attempt(s) remaining.', 'otp_expired': 'OTP not found or has expired. Please request a new one.', 'otp_locked': 'Too many invalid OTP attempts. Please request a new OTP.', 'cooldown': 'OTP was already requested recently. Please wait {seconds} seconds and try again.', 'ref_expired': 'Reference code not found or has expired. Please request a new OTP.', 'ref_invalid': 'Invalid reference code.', 'phone_invalid': 'Invalid phone number. Use local format like 0971234567 or international format.'}
 }
-
 
 def get_translation(lang: str, key: str, **kwargs) -> str:
     lang = lang.lower() if lang else "th"
