@@ -127,6 +127,7 @@ createApp({
     const refreshTimer = ref(null);
     const countdownTimer = ref(null);
     const popupTimer = ref(null);
+    let authCheckSequence = 0;
 
     const state = reactive({
       authResolved: false,
@@ -481,9 +482,13 @@ createApp({
     }
 
     async function checkAuth() {
+      const requestSequence = ++authCheckSequence;
       try {
         const response = await fetch("/admin/session");
         const data = await parseResponse(response);
+        if (requestSequence !== authCheckSequence) {
+          return;
+        }
         state.authenticated = Boolean(data.authenticated);
         state.authResolved = true;
         if (state.authenticated) {
@@ -492,6 +497,9 @@ createApp({
           startRefreshTimer();
         }
       } catch (error) {
+        if (requestSequence !== authCheckSequence) {
+          return;
+        }
         state.authResolved = true;
         state.authenticated = false;
       }
@@ -507,6 +515,7 @@ createApp({
         });
         const data = await parseResponse(response);
         if (response.ok) {
+          authCheckSequence += 1;
           state.loginForm.password = "";
           const nextPath = typeof data.next_path === "string" && data.next_path.trim()
             ? data.next_path.trim()
@@ -535,6 +544,7 @@ createApp({
     }
 
     async function handleLogout() {
+      authCheckSequence += 1;
       await fetch("/admin/logout", { method: "POST" });
       state.authenticated = false;
       state.authResolved = true;
