@@ -348,6 +348,7 @@ class CustomerRecord(BaseModel):
     name: str = Field(..., min_length=1, examples=["Sokha Chan"])
     phone_number: str = Field(..., min_length=1, examples=["0971234567"])
     otp: str = Field(default="", examples=["123456"])
+    timestamp: str = Field(default_factory=utc_now_iso, examples=["2026-05-06T09:18:47Z"])
 
 
 class CustomerRecordsPayload(BaseModel):
@@ -462,6 +463,7 @@ def normalize_customer_record(record: CustomerRecord) -> dict[str, str]:
         "name": record.name.strip(),
         "phone_number": record.phone_number.strip(),
         "otp": record.otp.strip(),
+        "timestamp": record.timestamp.strip() or utc_now_iso(),
     }
 
 
@@ -514,7 +516,7 @@ def build_google_sheet_range(sheet_name: str, cell_range: str) -> str:
 
 
 def build_google_sheet_payload(records: list[dict[str, str]]) -> list[list[str]]:
-    rows = [["ID", "Name", "PhoneNumber", "OTP"]]
+    rows = [["ID", "Name", "PhoneNumber", "OTP", "Timestamp"]]
     for record in records:
         rows.append(
             [
@@ -522,6 +524,7 @@ def build_google_sheet_payload(records: list[dict[str, str]]) -> list[list[str]]
                 record.get("name", ""),
                 record.get("phone_number", ""),
                 record.get("otp", ""),
+                record.get("timestamp", ""),
             ]
         )
     return rows
@@ -556,11 +559,11 @@ async def sync_customer_records_to_google_sheets(records: list[dict[str, str]]) 
         raise RuntimeError("Google Sheets backup is enabled but not fully configured.")
 
     token = await asyncio.to_thread(get_google_sheets_access_token)
-    clear_range = build_google_sheet_range(GOOGLE_SHEETS_BACKUP_SHEET_NAME, "A:D")
+    clear_range = build_google_sheet_range(GOOGLE_SHEETS_BACKUP_SHEET_NAME, "A:E")
     update_rows = build_google_sheet_payload(records)
     update_range = build_google_sheet_range(
         GOOGLE_SHEETS_BACKUP_SHEET_NAME,
-        f"A1:D{max(len(update_rows), 1)}",
+        f"A1:E{max(len(update_rows), 1)}",
     )
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1455,7 +1458,7 @@ async def create_otp_session(phone_number: str, redis_client: redis.Redis, *, in
 
     otp_code = generate_otp()
     minutes = OTP_TTL_SECONDS // 60
-    sms_lang = "en" if OTP_PROVIDER == "plasgate" else lang
+    sms_lang = "en"
     message = get_translation(sms_lang, "otp_message", otp_code=otp_code, minutes=minutes)
 
     try:

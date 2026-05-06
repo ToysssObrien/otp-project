@@ -45,7 +45,11 @@ const translations = {
     label_customer_name: "Name",
     label_customer_phone: "Phone Number",
     label_customer_otp: "OTP",
+    label_timestamp: "Date / Time",
+    table_actions: "Actions",
     btn_save_customer: "Save Customer",
+    btn_edit: "Edit",
+    btn_delete: "Delete",
     btn_import_excel: "Import Excel/CSV",
     btn_export_excel: "Export Excel",
     btn_export_csv: "Export CSV",
@@ -65,11 +69,14 @@ const translations = {
     customers_loaded: "Customer records loaded.",
     customers_imported: "Customer file imported successfully.",
     customers_exported: "Customer file exported.",
+    customers_deleted: "Customer record deleted.",
     customer_form_invalid: "Please fill Customer ID, Name, and Phone Number.",
+    customer_editing: "Editing customer record.",
     file_invalid: "Unsupported file. Please use .xlsx, .xls, or .csv.",
     save_failed: "Unable to save customer records.",
     load_metrics_failed: "Unable to load metrics.",
     request_failed: "Unable to request OTP.",
+    delete_confirm: "Delete customer {id}?",
     provider_unknown: "Unknown provider status",
     loading_workspace: "Loading workspace...",
     template_tagline_1: "Cloud-ready OTP support",
@@ -287,6 +294,37 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
+function currentIsoTimestamp() {
+  return new Date().toISOString();
+}
+
+function resolveCustomerTimestamp(row) {
+  const timestamp = String(
+    row?.timestamp ?? row?.date ?? row?.created_at ?? row?.createdat ?? row?.recordedat ?? row?.updated_at ?? ""
+  ).trim();
+  return timestamp || currentIsoTimestamp();
+}
+
+function formatCustomerTimestamp(timestamp, lang = "en") {
+  if (!timestamp) {
+    return "-";
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return String(timestamp);
+  }
+
+  const locale = lang === "kh" ? "km-KH" : lang === "th" ? "th-TH" : "en-US";
+  return new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
 function normalizeImportedHeaders(row) {
   const normalized = {};
   Object.entries(row || {}).forEach(([key, value]) => {
@@ -303,7 +341,8 @@ function convertImportedRows(rows) {
       id: String(row.id ?? row.customerid ?? row.customer ?? "").trim(),
       name: String(row.name ?? row.customername ?? "").trim(),
       phone_number: String(row.phonenumber ?? row.phone ?? row.mobilenumber ?? "").trim(),
-      otp: String(row.otp ?? "").trim()
+      otp: String(row.otp ?? "").trim(),
+      timestamp: resolveCustomerTimestamp(row)
     }))
     .filter((row) => row.id && row.name && row.phone_number);
 }
@@ -423,7 +462,7 @@ createApp({
       }
     });
 
-    const text = computed(() => translations[currentLang.value] || translations.en);
+    const text = computed(() => ({ ...translations.en, ...(translations[currentLang.value] || {}) }));
     const summaryCards = computed(() => {
       const summary = state.metrics?.summary || {};
       return [
@@ -693,7 +732,8 @@ createApp({
         id: state.verifyForm.id.trim(),
         name: state.verifyForm.name.trim(),
         phone_number: state.verifyForm.phone_number.trim(),
-        otp: state.verifyForm.otp.trim()
+        otp: state.verifyForm.otp.trim(),
+        timestamp: currentIsoTimestamp()
       };
       const hasCoreFields = formValues.id && formValues.name && formValues.phone_number;
       if (!hasCoreFields) {
@@ -715,6 +755,40 @@ createApp({
       const persistedCustomer = state.customers.find((customer) => customer.id === formValues.id) || formValues;
       fillVerifyCustomerForm(persistedCustomer);
       return persistedCustomer;
+    }
+
+    function editCustomer(customer) {
+      if (!customer) {
+        return;
+      }
+      fillVerifyCustomerForm(customer);
+      setActiveSection("verify-phone");
+      setLocalizedStatus("verify", "customer_editing", "success");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function deleteCustomer(customer) {
+      if (!customer) {
+        return;
+      }
+
+      const confirmMessage = text.value.delete_confirm.replace("{id}", customer.id || "-");
+      if (!window.confirm(confirmMessage)) {
+        return;
+      }
+
+      const previousCustomers = state.customers.slice();
+      state.customers = state.customers.filter((item) => item.id !== customer.id);
+      if (state.editingCustomerId === customer.id) {
+        resetVerifyForm();
+      }
+
+      try {
+        await persistCustomers("customers_deleted", "customers");
+      } catch (error) {
+        state.customers = previousCustomers;
+        setStatus("customers", error?.message || text.value.save_failed, "error");
+      }
     }
 
     async function requestStaffOtp() {
@@ -827,11 +901,12 @@ createApp({
         ID: customer.id,
         Name: customer.name,
         PhoneNumber: customer.phone_number,
-        OTP: customer.otp || ""
+        OTP: customer.otp || "",
+        Timestamp: customer.timestamp || ""
       }));
 
       if (format === "csv") {
-        const headers = ["ID", "Name", "PhoneNumber", "OTP"];
+        const headers = ["ID", "Name", "PhoneNumber", "OTP", "Timestamp"];
         const csvContent = [
           headers.join(","),
           ...rows.map((row) => headers.map((header) => escapeCsvValue(row[header])).join(","))
@@ -849,7 +924,10 @@ createApp({
     }
 
     function downloadTemplate() {
-      window.location.href = "/customer-import-template.xlsx";
+      const worksheet = XLSX.utils.aoa_to_sheet([["ID", "Name", "PhoneNumber", "OTP", "Timestamp"]]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
+      XLSX.writeFile(workbook, "customer-import-template.xlsx", { bookType: "xlsx" });
     }
 
     onMounted(() => {
@@ -888,13 +966,16 @@ createApp({
       exportCustomers,
       downloadTemplate,
       saveVerifyCustomerRecord,
+      editCustomer,
+      deleteCustomer,
+      formatCustomerTimestamp,
       refreshData,
       getStatusMessage
     };
   },
   template: `
     <div>
-      <div class="lang-switcher">
+      <div class="lang-switcher glass">
         <div class="utility-badge">
           <div class="utility-logo">
             <img src="/assets/icash-logo-b.png" alt="iCash logo">
@@ -1147,17 +1228,26 @@ createApp({
                         <th>{{ text.label_customer_name }}</th>
                         <th>{{ text.label_customer_phone }}</th>
                         <th>{{ text.label_customer_otp }}</th>
+                        <th>{{ text.label_timestamp }}</th>
+                        <th>{{ text.table_actions }}</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-if="!filteredCustomers.length">
-                        <td colspan="4" class="empty-state">{{ text.table_empty }}</td>
+                        <td colspan="6" class="empty-state">{{ text.table_empty }}</td>
                       </tr>
                       <tr v-for="customer in filteredCustomers" :key="customer.id">
                         <td>{{ customer.id }}</td>
                         <td>{{ customer.name }}</td>
                         <td>{{ customer.phone_number }}</td>
                         <td>{{ customer.otp || '' }}</td>
+                        <td class="timestamp-cell">{{ formatCustomerTimestamp(customer.timestamp, currentLang) }}</td>
+                        <td class="actions-cell">
+                          <div class="table-actions">
+                            <button type="button" class="table-button edit" @click="editCustomer(customer)">{{ text.btn_edit }}</button>
+                            <button type="button" class="table-button delete" @click="deleteCustomer(customer)">{{ text.btn_delete }}</button>
+                          </div>
+                        </td>
                       </tr>
                     </tbody>
                   </table>
