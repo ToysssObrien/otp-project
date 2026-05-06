@@ -58,11 +58,16 @@ services:
         value: "10"
       - key: PROVIDER_FAILURE_WINDOW_SECONDS
         value: "900"
-      - key: REDIS_URL
+      - key: REDIS_HOST
         fromService:
           type: keyvalue
           name: otp-redis
-          property: connectionString
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: keyvalue
+          name: otp-redis
+          property: port
       - key: INFOBIP_BASE_URL
         value: "https://api.infobip.com"
       - key: INFOBIP_SENDER

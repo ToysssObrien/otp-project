@@ -104,6 +104,8 @@ DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "855").lstrip("+")
 DEV_OTP_MODE = env_flag("DEV_OTP_MODE", False)
 OTP_PROVIDER = os.getenv("OTP_PROVIDER", "dev").strip().lower()
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
+REDIS_HOST = os.getenv("REDIS_HOST", "").strip()
+REDIS_PORT = os.getenv("REDIS_PORT", "").strip()
 USE_FAKE_REDIS = env_flag("USE_FAKE_REDIS", DEV_OTP_MODE)
 OTP_TTL_SECONDS = validate_positive_int("OTP_TTL_SECONDS", 300)
 OTP_LENGTH = validate_positive_int("OTP_LENGTH", 6)
@@ -178,9 +180,14 @@ async def lifespan(app: FastAPI):
         redis_client = fakeredis.FakeAsyncRedis(decode_responses=True)
         redis_backend = "fakeredis"
     else:
-        if not REDIS_URL:
-            raise RuntimeError("REDIS_URL is required when USE_FAKE_REDIS is false.")
-        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        redis_url = REDIS_URL
+        if not redis_url and REDIS_HOST and REDIS_PORT:
+            redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}"
+        if not redis_url:
+            raise RuntimeError(
+                "Redis connection settings are missing. Set REDIS_URL or provide REDIS_HOST and REDIS_PORT when USE_FAKE_REDIS is false."
+            )
+        redis_client = redis.from_url(redis_url, decode_responses=True)
         await redis_client.ping()
         redis_backend = "redis"
 
