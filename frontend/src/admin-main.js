@@ -499,18 +499,25 @@ createApp({
 
     async function handleLogin() {
       clearStatus("login");
-      const response = await fetch("/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(state.loginForm)
-      });
-      if (response.ok) {
-        state.loginForm.password = "";
-        state.authResolved = false;
-        await checkAuth();
-        return;
+      try {
+        const response = await fetch("/admin/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(state.loginForm)
+        });
+        const data = await parseResponse(response);
+        if (response.ok) {
+          state.loginForm.password = "";
+          const nextPath = typeof data.next_path === "string" && data.next_path.trim()
+            ? data.next_path.trim()
+            : "/ops.html";
+          window.location.assign(nextPath);
+          return;
+        }
+        setLocalizedStatus("login", "login_invalid", "error");
+      } catch (error) {
+        setStatus("login", error?.message || text.value.login_invalid, "error");
       }
-      setLocalizedStatus("login", "login_invalid", "error");
     }
 
     async function handleLogout() {
