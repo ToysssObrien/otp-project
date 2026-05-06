@@ -85,7 +85,9 @@ Recommended setup:
    - `ADMIN_DASHBOARD_USERNAME`
    - `ADMIN_DASHBOARD_PASSWORD`
    - `ADMIN_SESSION_SECRET`
-   - `INFOBIP_API_KEY` if you use Infobip
+   - `PLASGATE_SECRET_KEY`
+   - `PLASGATE_PRIVATE_KEY`
+   - `PLASGATE_SENDER` if your Plasgate sender is different from `PlasGateUAT`
 5. After the first deploy, open:
    - `/health`
    - `/otp.html`
@@ -94,6 +96,7 @@ Recommended setup:
 Notes:
 
 - `REDIS_URL` is wired from the Render Key Value service automatically.
+- `OTP_PROVIDER` is set to `plasgate` in `render.yaml`.
 - The app is configured for the Singapore region in `render.yaml` to keep latency low for Southeast Asia.
 - Do not use the free instance types for production OTP traffic.
 

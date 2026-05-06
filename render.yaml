@@ -25,7 +25,7 @@ services:
       - key: DEFAULT_COUNTRY_CODE
         value: "855"
       - key: OTP_PROVIDER
-        value: "infobip"
+        value: "plasgate"
       - key: OTP_TTL_SECONDS
         value: "300"
       - key: REQUEST_OTP_COOLDOWN_SECONDS
@@ -68,9 +68,9 @@ services:
           type: keyvalue
           name: otp-redis
           property: port
-      - key: INFOBIP_BASE_URL
-        value: "https://api.infobip.com"
-      - key: INFOBIP_SENDER
-        value: "ServiceSMS"
-      - key: INFOBIP_API_KEY
+      - key: PLASGATE_SECRET_KEY
         sync: false
+      - key: PLASGATE_PRIVATE_KEY
+        sync: false
+      - key: PLASGATE_SENDER
+        value: "PlasGateUAT"
