@@ -511,7 +511,21 @@ createApp({
           const nextPath = typeof data.next_path === "string" && data.next_path.trim()
             ? data.next_path.trim()
             : "/ops.html";
-          window.location.assign(nextPath);
+          if (nextPath !== "/ops.html") {
+            window.location.assign(nextPath);
+            return;
+          }
+          state.authenticated = true;
+          state.authResolved = true;
+          setActiveSection("dashboard", false);
+          window.setTimeout(async () => {
+            try {
+              await loadAdminData();
+              startRefreshTimer();
+            } catch (error) {
+              console.error(error);
+            }
+          }, 150);
           return;
         }
         setLocalizedStatus("login", "login_invalid", "error");
