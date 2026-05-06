@@ -115,6 +115,24 @@ const translations = {
   kh: translationsEn
 };
 
+const sectionConfig = {
+  dashboard: {
+    titleKey: "dashboard_title",
+    descKey: "dashboard_desc",
+    kickerKey: "section_kicker_dashboard"
+  },
+  "verify-phone": {
+    titleKey: "verify_phone_title",
+    descKey: "verify_phone_copy",
+    kickerKey: "section_kicker_verify"
+  },
+  customers: {
+    titleKey: "customers_title",
+    descKey: "customers_copy",
+    kickerKey: "section_kicker_customers"
+  }
+};
+
 function getFetchErrorMessage(data, fallback) {
   return data?.detail || data?.message || fallback;
 }
