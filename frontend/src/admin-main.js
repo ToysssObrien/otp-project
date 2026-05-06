@@ -1,4 +1,4 @@
-import { createApp, reactive, ref, computed, watch, onMounted, onBeforeUnmount } from "vue/dist/vue.esm-bundler.js";
+import { createApp, reactive, ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue/dist/vue.esm-bundler.js";
 import * as XLSX from "xlsx";
 import "./admin.css";
 
@@ -628,20 +628,24 @@ createApp({
         return;
       }
 
-      const response = await fetch("/api/request-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: state.verifyForm.phone_number.trim() })
-      });
-      const data = await parseResponse(response);
-      if (!response.ok) {
-        setStatus("verify", getFetchErrorMessage(data, text.value.request_failed), "error");
-        return;
-      }
+      try {
+        const response = await fetch("/api/request-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: state.verifyForm.phone_number.trim(), lang: currentLang.value })
+        });
+        const data = await parseResponse(response);
+        if (!response.ok) {
+          setStatus("verify", getFetchErrorMessage(data, text.value.request_failed), "error");
+          return;
+        }
 
-      state.verifyStepReady = true;
-      startVerifyCountdown(data.expires_in || 0);
-      setLocalizedStatus("verify", "sent_to", "success", { phone: state.verifyForm.phone_number.trim() });
+        state.verifyStepReady = true;
+        startVerifyCountdown(data.expires_in || 0);
+        setLocalizedStatus("verify", "sent_to", "success", { phone: state.verifyForm.phone_number.trim() });
+      } catch (error) {
+        setStatus("verify", error?.message || text.value.request_failed, "error");
+      }
     }
 
     async function verifyStaffOtp() {
@@ -654,20 +658,27 @@ createApp({
         return;
       }
 
-      const response = await fetch("/api/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, otp })
-      });
-      const data = await parseResponse(response);
-      if (response.ok) {
-        setLocalizedStatus("verify", "verify_success", "success");
-      } else {
-        setStatus("verify", getFetchErrorMessage(data, "-"), "error");
-      }
-      if (response.ok) {
-        await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
-        await refreshData();
+      try {
+        const response = await fetch("/api/verify-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone, otp, lang: currentLang.value })
+        });
+        const data = await parseResponse(response);
+        if (response.ok) {
+          setLocalizedStatus("verify", "verify_success", "success");
+          await nextTick();
+          try {
+            await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
+            await refreshData();
+          } catch (error) {
+            console.error(error);
+          }
+        } else {
+          setStatus("verify", getFetchErrorMessage(data, "-"), "error");
+        }
+      } catch (error) {
+        setStatus("verify", error?.message || "-", "error");
       }
     }
 
@@ -874,8 +885,8 @@ createApp({
             </div>
 
             <div class="sidebar-footer">
-              <button class="nav-button" @click="refreshData">{{ text.btn_refresh }}</button>
-              <button class="nav-button" @click="handleLogout">{{ text.btn_logout }}</button>
+              <button type="button" class="nav-button" @click="refreshData">{{ text.btn_refresh }}</button>
+              <button type="button" class="nav-button" @click="handleLogout">{{ text.btn_logout }}</button>
             </div>
           </aside>
 
@@ -969,9 +980,9 @@ createApp({
                 </div>
 
                 <div class="button-row">
-                  <button class="ghost-button" @click="saveVerifyCustomerRecord()">{{ text.btn_save_customer }}</button>
-                  <button class="button" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
-                  <button class="ghost-button" @click="resetVerifyForm">{{ text.btn_reset }}</button>
+                  <button type="button" class="ghost-button" @click="saveVerifyCustomerRecord()">{{ text.btn_save_customer }}</button>
+                  <button type="button" class="button" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
+                  <button type="button" class="ghost-button" @click="resetVerifyForm">{{ text.btn_reset }}</button>
                 </div>
 
                 <div v-if="state.verifyStepReady">
@@ -981,7 +992,7 @@ createApp({
                     <div>{{ text.expires_in }}: <strong>{{ verifyCountdownText }}</strong></div>
                   </div>
                   <div class="button-row">
-                    <button class="button" @click="verifyStaffOtp">{{ text.btn_verify_otp }}</button>
+                    <button type="button" class="button" @click="verifyStaffOtp">{{ text.btn_verify_otp }}</button>
                   </div>
                 </div>
 

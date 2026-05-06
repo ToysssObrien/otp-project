@@ -294,11 +294,13 @@ class OTPVerify(BaseModel):
 
 class StaffAssistedOTPRequest(BaseModel):
     phone: str = Field(..., description="Customer phone number in local format.", examples=["0812345678"])
+    lang: str = Field(default="th", description="Language preference (en, kh, th).", examples=["th"])
 
 
 class StaffAssistedOTPVerify(BaseModel):
     phone: str = Field(..., description="Customer phone number in local format.", examples=["0812345678"])
     otp: str = Field(..., description="The 6-digit OTP received by the customer.", examples=["123456"])
+    lang: str = Field(default="th", description="Language preference (en, kh, th).", examples=["th"])
 
 
 class AdminLoginRequest(BaseModel):
@@ -1726,7 +1728,7 @@ async def staff_request_otp(
     redis_client: redis.Redis = Depends(get_redis),
 ):
     phone_number = normalize_phone_number(otp_request.phone)
-    session_payload = await create_otp_session(phone_number, redis_client, include_ref_code=False)
+    session_payload = await create_otp_session(phone_number, redis_client, include_ref_code=False, lang=otp_request.lang)
     return {
         "status": "success",
         "expires_in": int(session_payload["expires_in"]),
@@ -1742,7 +1744,7 @@ async def staff_verify_otp(
 ):
     phone_number = normalize_phone_number(otp_verify.phone)
     provided_otp = validate_otp_format(otp_verify.otp)
-    message = await verify_otp_session(phone_number, provided_otp, redis_client)
+    message = await verify_otp_session(phone_number, provided_otp, redis_client, lang=otp_verify.lang)
     return {"status": "success", "message": message}
 
 
