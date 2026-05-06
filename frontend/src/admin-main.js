@@ -137,6 +137,13 @@ function getFetchErrorMessage(data, fallback) {
   return data?.detail || data?.message || fallback;
 }
 
+function withLoginCacheBust(path) {
+  const safePath = typeof path === "string" && path.trim() ? path.trim() : "/ops.html";
+  const [basePath, hash = ""] = safePath.split("#");
+  const separator = basePath.includes("?") ? "&" : "?";
+  return `${basePath}${separator}login=${Date.now()}${hash ? `#${hash}` : ""}`;
+}
+
 createApp({
   setup() {
     const currentLang = ref(localStorage.getItem("otp_lang") || "th");
@@ -538,21 +545,7 @@ createApp({
           const nextPath = typeof data.next_path === "string" && data.next_path.trim()
             ? data.next_path.trim()
             : "/ops.html";
-          if (nextPath !== "/ops.html") {
-            window.location.assign(nextPath);
-            return;
-          }
-          state.authenticated = true;
-          state.authResolved = true;
-          setActiveSection("dashboard", false);
-          window.setTimeout(async () => {
-            try {
-              await loadAdminData();
-              startRefreshTimer();
-            } catch (error) {
-              console.error(error);
-            }
-          }, 150);
+          window.location.replace(withLoginCacheBust(nextPath));
           return;
         }
         setLocalizedStatus("login", "login_invalid", "error");
