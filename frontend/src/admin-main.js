@@ -294,6 +294,18 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
+function getVerifyPopupTitle(mode) {
+  return mode === "loading" ? "Loading" : "Success";
+}
+
+function getVerifyLoadingMessage() {
+  return "Verifying OTP...";
+}
+
+function getVerifySuccessMessage() {
+  return "OTP verified successfully.";
+}
+
 function currentIsoTimestamp() {
   return new Date().toISOString();
 }
@@ -829,7 +841,7 @@ createApp({
       }
 
       state.verifyBusy = true;
-      showVerifyPopup("loading", text.value.verify_loading_message);
+      showVerifyPopup("loading", getVerifyLoadingMessage());
 
       try {
         const response = await fetch("/api/verify-otp", {
@@ -840,7 +852,7 @@ createApp({
         const data = await parseResponse(response);
         if (response.ok) {
           setLocalizedStatus("verify", "verify_success", "success");
-          showVerifySuccessPopup(text.value.verify_success_message);
+          showVerifySuccessPopup(getVerifySuccessMessage());
           await nextTick();
           try {
             await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
@@ -969,6 +981,7 @@ createApp({
       editCustomer,
       deleteCustomer,
       formatCustomerTimestamp,
+      getVerifyPopupTitle,
       refreshData,
       getStatusMessage
     };
@@ -1259,9 +1272,9 @@ createApp({
               <div v-if="state.verifyPopup.open" class="popup-overlay" :class="state.verifyPopup.mode" role="status" aria-live="polite" aria-modal="true">
                 <div class="popup-card glass">
                   <div v-if="state.verifyPopup.mode === 'loading'" class="popup-spinner" aria-hidden="true"></div>
-                  <div v-else class="popup-check" aria-hidden="true">ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“</div>
+                  <div v-else class="popup-check" aria-hidden="true">OK</div>
                   <div class="popup-title">
-                    {{ state.verifyPopup.mode === 'loading' ? text.popup_loading : text.popup_success }}
+                    {{ getVerifyPopupTitle(state.verifyPopup.mode) }}
                   </div>
                   <div class="popup-message">{{ state.verifyPopup.message }}</div>
                 </div>
