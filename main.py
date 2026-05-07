@@ -576,29 +576,32 @@ async def sync_seed_admin_users(redis_client: redis.Redis) -> None:
     users = await load_admin_users(redis_client)
     now = utc_now_iso()
     seed_hash = hash_admin_password(ADMIN_DASHBOARD_PASSWORD)
-    updated_seed = False
+
+    seed_username = ADMIN_DASHBOARD_USERNAME.strip()
+    seed_username_lower = seed_username.lower()
+    seed_created_at = now
 
     for user in users:
-        if str(user.get("origin")) == "env" and str(user.get("role")) == ADMIN_ROLE_SUPER_ADMIN:
-            user["username"] = ADMIN_DASHBOARD_USERNAME
-            user["password_hash"] = seed_hash
-            user["updated_at"] = now
-            user["active"] = True
-            updated_seed = True
+        if str(user.get("username", "")).lower() == seed_username_lower and str(user.get("role")) == ADMIN_ROLE_SUPER_ADMIN:
+            seed_created_at = str(user.get("created_at", now))
             break
 
-    if not updated_seed:
-        users.append(
-            {
-                "username": ADMIN_DASHBOARD_USERNAME,
-                "role": ADMIN_ROLE_SUPER_ADMIN,
-                "origin": "env",
-                "password_hash": seed_hash,
-                "created_at": now,
-                "updated_at": now,
-                "active": True,
-            }
-        )
+    users = [
+        user
+        for user in users
+        if str(user.get("username", "")).lower() != seed_username_lower
+    ]
+    users.append(
+        {
+            "username": seed_username,
+            "role": ADMIN_ROLE_SUPER_ADMIN,
+            "origin": "env",
+            "password_hash": seed_hash,
+            "created_at": seed_created_at,
+            "updated_at": now,
+            "active": True,
+        }
+    )
 
     await save_admin_users(redis_client, users)
 

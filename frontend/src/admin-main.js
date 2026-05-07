@@ -899,7 +899,7 @@ createApp({
           window.location.replace(withLoginCacheBust(nextPath));
           return;
         }
-        setLocalizedStatus("login", "login_invalid", "error");
+        setStatus("login", getFetchErrorMessage(data, text.value.login_invalid), "error");
       } catch (error) {
         setStatus("login", error?.message || text.value.login_invalid, "error");
       }
