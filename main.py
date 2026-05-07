@@ -121,6 +121,9 @@ ADMIN_ROLE_STAFF = "staff"
 ADMIN_SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE_NAME", "otp_admin_session").strip() or "otp_admin_session"
 ADMIN_SESSION_DURATION_SECONDS = validate_positive_int("ADMIN_SESSION_DURATION_SECONDS", 28800)
 ADMIN_SESSION_COOKIE_SECURE = env_flag("ADMIN_SESSION_COOKIE_SECURE", not DEV_OTP_MODE)
+REDIS_MAX_CONNECTIONS = validate_positive_int("REDIS_MAX_CONNECTIONS", 10)
+REDIS_STARTUP_RETRIES = validate_positive_int("REDIS_STARTUP_RETRIES", 5)
+REDIS_STARTUP_RETRY_DELAY_SECONDS = validate_positive_int("REDIS_STARTUP_RETRY_DELAY_SECONDS", 2)
 REQUEST_OTP_RATE_LIMIT = os.getenv(
     "REQUEST_OTP_RATE_LIMIT",
     "30/minute" if DEV_OTP_MODE else "1/minute",
@@ -181,6 +184,20 @@ async def close_redis_client(redis_client: redis.Redis) -> None:
             await result
 
 
+async def warm_redis_client(redis_client: redis.Redis) -> bool:
+    delay = float(REDIS_STARTUP_RETRY_DELAY_SECONDS)
+    for attempt in range(1, REDIS_STARTUP_RETRIES + 1):
+        try:
+            await redis_client.ping()
+            return True
+        except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError, OSError) as exc:
+            safe_console_print(f"[redis] startup ping failed ({attempt}/{REDIS_STARTUP_RETRIES}): {trim_text(exc)}")
+            if attempt < REDIS_STARTUP_RETRIES:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 15.0)
+    return False
+
+
 # --- Redis Connection Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -196,14 +213,25 @@ async def lifespan(app: FastAPI):
             raise RuntimeError(
                 "Redis connection settings are missing. Set REDIS_URL or provide REDIS_HOST and REDIS_PORT when USE_FAKE_REDIS is false."
             )
-        redis_client = redis.from_url(redis_url, decode_responses=True)
-        await redis_client.ping()
+        redis_client = redis.from_url(
+            redis_url,
+            decode_responses=True,
+            max_connections=REDIS_MAX_CONNECTIONS,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            health_check_interval=30,
+        )
+        await warm_redis_client(redis_client)
         redis_backend = "redis"
 
     app.state.redis = redis_client
     app.state.redis_backend = redis_backend
 
-    await sync_seed_admin_users(redis_client)
+    try:
+        await sync_seed_admin_users(redis_client)
+    except Exception as exc:
+        safe_console_print(f"[redis] unable to seed admin users at startup: {trim_text(exc)}")
 
     if GOOGLE_SHEETS_BACKUP_ENABLED and GOOGLE_SHEETS_BACKUP_STRICT and not is_google_sheets_backup_ready():
         raise RuntimeError(
@@ -2134,7 +2162,10 @@ async def admin_login(login_request: AdminLoginRequest, redis_client: redis.Redi
 
     username = login_request.username.strip()
     password = login_request.password
-    identity = await authenticate_admin_credentials(redis_client, username, password)
+    try:
+        identity = await authenticate_admin_credentials(redis_client, username, password)
+    except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Admin storage is temporarily unavailable. Please try again.") from exc
 
     if not identity:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
