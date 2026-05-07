@@ -66,6 +66,7 @@ Frontend source lives in `frontend/` and builds into `static/`.
 
 - Set `USE_FAKE_REDIS=false`
 - Set a real `REDIS_URL`
+- Customer records and dashboard metrics are both stored in Redis, so they survive deploys as long as the Redis service remains attached.
 - Rotate SMS credentials if they were ever exposed
 - Keep `/ops.html` behind admin auth only
 

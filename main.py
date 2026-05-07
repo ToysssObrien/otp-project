@@ -157,8 +157,8 @@ PHONE_VERIFY_FAIL_KEY = "otp_metrics:phone:verify_fail"
 PHONE_VERIFY_SUCCESS_KEY = "otp_metrics:phone:verify_success"
 RECENT_EVENTS_KEY = "otp_metrics:events"
 PROVIDER_METRICS_PREFIX = "otp_metrics:provider:"
-DATA_DIR = Path(__file__).resolve().parent / "data"
-CUSTOMERS_FILE = DATA_DIR / "customers.json"
+CUSTOMER_RECORDS_KEY = "otp_data:customers"
+LEGACY_CUSTOMERS_FILE = Path(__file__).resolve().parent / "data" / "customers.json"
 
 
 # --- Rate Limiter Setup ---
@@ -598,12 +598,12 @@ async def sync_customer_records_to_google_sheets(records: list[dict[str, str]]) 
             )
 
 
-def load_customer_records() -> list[dict[str, str]]:
-    if not CUSTOMERS_FILE.exists():
+def load_customer_records_from_legacy_file() -> list[dict[str, str]]:
+    if not LEGACY_CUSTOMERS_FILE.exists():
         return []
 
     try:
-        raw_records = json.loads(CUSTOMERS_FILE.read_text(encoding="utf-8"))
+        raw_records = json.loads(LEGACY_CUSTOMERS_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
 
@@ -622,13 +622,43 @@ def load_customer_records() -> list[dict[str, str]]:
     return normalized_records
 
 
-def save_customer_records(records: list[CustomerRecord]) -> list[dict[str, str]]:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+async def load_customer_records(redis_client: redis.Redis) -> list[dict[str, str]]:
+    raw_records = await redis_client.get(CUSTOMER_RECORDS_KEY)
+    if raw_records:
+        try:
+            parsed_records = json.loads(raw_records)
+        except json.JSONDecodeError:
+            parsed_records = None
+        if isinstance(parsed_records, list):
+            normalized_records: list[dict[str, str]] = []
+            for raw_record in parsed_records:
+                if not isinstance(raw_record, dict):
+                    continue
+                try:
+                    record = CustomerRecord.model_validate(raw_record)
+                except Exception:
+                    continue
+                normalized_records.append(normalize_customer_record(record))
+            return normalized_records
+
+    legacy_records = load_customer_records_from_legacy_file()
+    if legacy_records:
+        await redis_client.set(CUSTOMER_RECORDS_KEY, json.dumps(legacy_records, ensure_ascii=False))
+        try:
+            LEGACY_CUSTOMERS_FILE.unlink()
+        except OSError:
+            pass
+    return legacy_records
+
+
+async def save_customer_records(redis_client: redis.Redis, records: list[CustomerRecord]) -> list[dict[str, str]]:
     normalized_records = [normalize_customer_record(record) for record in records]
-    CUSTOMERS_FILE.write_text(
-        json.dumps(normalized_records, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    await redis_client.set(CUSTOMER_RECORDS_KEY, json.dumps(normalized_records, ensure_ascii=False))
+    if LEGACY_CUSTOMERS_FILE.exists():
+        try:
+            LEGACY_CUSTOMERS_FILE.unlink()
+        except OSError:
+            pass
     return normalized_records
 
 
@@ -1685,15 +1715,15 @@ async def admin_session_status(request: Request):
 
 
 @app.get("/admin/customers", response_model=CustomerRecordsResponse)
-async def admin_customers_list(request: Request):
+async def admin_customers_list(request: Request, redis_client: redis.Redis = Depends(get_redis)):
     require_admin_request(request)
-    return {"customers": load_customer_records()}
+    return {"customers": await load_customer_records(redis_client)}
 
 
 @app.put("/admin/customers", response_model=CustomerRecordsResponse)
-async def admin_customers_save(request: Request, payload: CustomerRecordsPayload):
+async def admin_customers_save(request: Request, payload: CustomerRecordsPayload, redis_client: redis.Redis = Depends(get_redis)):
     require_admin_request(request)
-    customers = save_customer_records(payload.customers)
+    customers = await save_customer_records(redis_client, payload.customers)
     try:
         await sync_customer_records_to_google_sheets(customers)
     except Exception as exc:
