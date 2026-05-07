@@ -288,8 +288,14 @@ async def disable_cache(request: Request, call_next):
         if not ADMIN_DASHBOARD_AUTH_CONFIGURED:
             return build_admin_unavailable_response()
         redis_client = getattr(request.app.state, "redis", None)
-        if redis_client is None or not await is_admin_authenticated(request, redis_client):
-            return build_admin_auth_response()
+        if redis_client is None:
+            return build_admin_storage_unavailable_response()
+        try:
+            if not await is_admin_authenticated(request, redis_client):
+                return build_admin_auth_response()
+        except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError, OSError) as exc:
+            safe_console_print(f"[admin] auth lookup failed: {trim_text(exc)}")
+            return build_admin_storage_unavailable_response()
 
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -423,6 +429,7 @@ class HealthResponse(BaseModel):
     provider: str
     dev_mode: bool
     redis_backend: str
+    redis_status: str = "ok"
     admin_dashboard_enabled: bool
     admin_dashboard_auth_configured: bool
 
@@ -468,6 +475,13 @@ def build_admin_unavailable_response() -> JSONResponse:
     return JSONResponse(
         status_code=503,
         content={"detail": "OTP admin monitor is enabled but credentials are not configured."},
+    )
+
+
+def build_admin_storage_unavailable_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "OTP admin monitor storage is temporarily unavailable."},
     )
 
 
@@ -2361,12 +2375,18 @@ async def admin_users_delete(
 
 @app.get("/health", response_model=HealthResponse)
 async def health(request: Request, redis_client: redis.Redis = Depends(get_redis)):
-    await redis_client.ping()
+    redis_status = "ok"
+    try:
+        await redis_client.ping()
+    except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError, OSError) as exc:
+        redis_status = "degraded"
+        safe_console_print(f"[health] redis unavailable: {trim_text(exc)}")
     return {
         "status": "ok",
         "provider": OTP_PROVIDER,
         "dev_mode": DEV_OTP_MODE,
         "redis_backend": request.app.state.redis_backend,
+        "redis_status": redis_status,
         "admin_dashboard_enabled": ADMIN_DASHBOARD_ENABLED,
         "admin_dashboard_auth_configured": ADMIN_DASHBOARD_AUTH_CONFIGURED,
     }
