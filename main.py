@@ -141,9 +141,14 @@ GOOGLE_SHEETS_BACKUP_ENABLED = env_flag("GOOGLE_SHEETS_BACKUP_ENABLED", False)
 GOOGLE_SHEETS_BACKUP_STRICT = env_flag("GOOGLE_SHEETS_BACKUP_STRICT", False)
 GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID = os.getenv("GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID", "").strip()
 GOOGLE_SHEETS_BACKUP_SHEET_NAME = os.getenv("GOOGLE_SHEETS_BACKUP_SHEET_NAME", "Customers").strip() or "Customers"
+GOOGLE_SHEETS_BACKUP_DASHBOARD_SHEET_NAME = os.getenv(
+    "GOOGLE_SHEETS_BACKUP_DASHBOARD_SHEET_NAME",
+    "Dashboard",
+).strip() or "Dashboard"
 GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON", "").strip()
 GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE", "").strip()
 GOOGLE_SHEETS_BACKUP_TIMEOUT_SECONDS = validate_positive_int("GOOGLE_SHEETS_BACKUP_TIMEOUT_SECONDS", 15)
+GOOGLE_SHEETS_BACKUP_INTERVAL_SECONDS = validate_positive_int("GOOGLE_SHEETS_BACKUP_INTERVAL_SECONDS", 300)
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
 if OTP_LENGTH != 6:
@@ -159,6 +164,8 @@ RECENT_EVENTS_KEY = "otp_metrics:events"
 PROVIDER_METRICS_PREFIX = "otp_metrics:provider:"
 CUSTOMER_RECORDS_KEY = "otp_data:customers"
 LEGACY_CUSTOMERS_FILE = Path(__file__).resolve().parent / "data" / "customers.json"
+BACKUP_EXPORT_DIR = Path(__file__).resolve().parent / "data" / "backups"
+BACKUP_EXPORT_FILE = BACKUP_EXPORT_DIR / "latest-backup.json"
 
 
 # --- Rate Limiter Setup ---
@@ -176,6 +183,7 @@ async def close_redis_client(redis_client: redis.Redis) -> None:
 # --- Redis Connection Lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    backup_task: asyncio.Task | None = None
     if USE_FAKE_REDIS:
         redis_client = fakeredis.FakeAsyncRedis(decode_responses=True)
         redis_backend = "fakeredis"
@@ -218,9 +226,17 @@ async def lifespan(app: FastAPI):
         f"twilio_sid_present={'yes' if bool(os.getenv('TWILIO_ACCOUNT_SID')) else 'no'}"
     )
 
+    backup_task = asyncio.create_task(run_backup_loop(redis_client, redis_backend))
+
     try:
         yield
     finally:
+        if backup_task is not None:
+            backup_task.cancel()
+            try:
+                await backup_task
+            except asyncio.CancelledError:
+                pass
         await close_redis_client(redis_client)
 
 
@@ -515,19 +531,106 @@ def build_google_sheet_range(sheet_name: str, cell_range: str) -> str:
     return f"'{escaped_name}'!{cell_range}"
 
 
-def build_google_sheet_payload(records: list[dict[str, str]]) -> list[list[str]]:
-    rows = [["ID", "Name", "PhoneNumber", "OTP", "Timestamp"]]
-    for record in records:
+def google_sheet_column_name(index: int) -> str:
+    if index < 1:
+        raise ValueError("Google Sheet column index must be positive.")
+
+    column = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        column = chr(65 + remainder) + column
+    return column
+
+
+def build_google_sheet_payload(headers: list[str], rows: list[list[object]]) -> list[list[str]]:
+    payload = [headers]
+    for row in rows:
+        payload.append(["" if value is None else str(value) for value in row])
+    return payload
+
+
+def build_customer_sheet_rows(records: list[dict[str, str]]) -> list[list[object]]:
+    return [
+        [
+            record.get("id", ""),
+            record.get("name", ""),
+            record.get("phone_number", ""),
+            record.get("otp", ""),
+            record.get("timestamp", ""),
+        ]
+        for record in records
+    ]
+
+
+def build_dashboard_sheet_rows(snapshot: dict) -> list[list[object]]:
+    generated_at = snapshot.get("generated_at", "")
+    rows: list[list[object]] = []
+
+    service = snapshot.get("service") or {}
+    for key, value in service.items():
+        rows.append(["service", key, value, generated_at, ""])
+
+    summary = snapshot.get("summary") or {}
+    for key, value in summary.items():
+        rows.append(["summary", key, value, generated_at, ""])
+
+    phones = snapshot.get("phones") or {}
+    for section_name, phone_rows in phones.items():
+        for index, phone_row in enumerate(phone_rows or [], start=1):
+            if isinstance(phone_row, dict):
+                rows.append(
+                    [
+                        section_name,
+                        phone_row.get("phone", f"row-{index}"),
+                        phone_row.get("count", 0),
+                        generated_at,
+                        json.dumps(phone_row, ensure_ascii=False),
+                    ]
+                )
+
+    for provider in snapshot.get("providers") or []:
+        if not isinstance(provider, dict):
+            continue
         rows.append(
             [
-                record.get("id", ""),
-                record.get("name", ""),
-                record.get("phone_number", ""),
-                record.get("otp", ""),
-                record.get("timestamp", ""),
+                "provider",
+                provider.get("provider", ""),
+                provider.get("health", ""),
+                provider.get("updated_at", generated_at),
+                json.dumps(provider, ensure_ascii=False),
             ]
         )
+
+    for event in snapshot.get("recent_events") or []:
+        if not isinstance(event, dict):
+            continue
+        rows.append(
+            [
+                "recent_event",
+                event.get("type", ""),
+                event.get("status", ""),
+                event.get("recorded_at", generated_at),
+                json.dumps(event, ensure_ascii=False),
+            ]
+        )
+
     return rows
+
+
+def build_backup_export_payload(customers: list[dict[str, str]], dashboard_snapshot: dict) -> dict:
+    return {
+        "generated_at": utc_now_iso(),
+        "customers": customers,
+        "dashboard": dashboard_snapshot,
+    }
+
+
+def write_local_backup_export(export_payload: dict) -> None:
+    BACKUP_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    BACKUP_EXPORT_FILE.write_text(
+        json.dumps(export_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def extract_http_error_detail(response: httpx.Response) -> str:
@@ -558,14 +661,36 @@ async def sync_customer_records_to_google_sheets(records: list[dict[str, str]]) 
     if not is_google_sheets_backup_ready():
         raise RuntimeError("Google Sheets backup is enabled but not fully configured.")
 
-    token = await asyncio.to_thread(get_google_sheets_access_token)
-    clear_range = build_google_sheet_range(GOOGLE_SHEETS_BACKUP_SHEET_NAME, "A:E")
-    update_rows = build_google_sheet_payload(records)
-    update_range = build_google_sheet_range(
-        GOOGLE_SHEETS_BACKUP_SHEET_NAME,
-        f"A1:E{max(len(update_rows), 1)}",
+    await sync_google_sheet_table(
+        sheet_name=GOOGLE_SHEETS_BACKUP_SHEET_NAME,
+        headers=["ID", "Name", "PhoneNumber", "OTP", "Timestamp"],
+        rows=build_customer_sheet_rows(records),
     )
-    headers = {
+
+
+async def sync_dashboard_snapshot_to_google_sheets(snapshot: dict) -> None:
+    if not GOOGLE_SHEETS_BACKUP_ENABLED:
+        return
+
+    if not is_google_sheets_backup_ready():
+        raise RuntimeError("Google Sheets backup is enabled but not fully configured.")
+
+    await sync_google_sheet_table(
+        sheet_name=GOOGLE_SHEETS_BACKUP_DASHBOARD_SHEET_NAME,
+        headers=["Section", "Name", "Value", "UpdatedAt", "Details"],
+        rows=build_dashboard_sheet_rows(snapshot),
+    )
+
+
+async def sync_google_sheet_table(sheet_name: str, headers: list[str], rows: list[list[object]]) -> None:
+    token = await asyncio.to_thread(get_google_sheets_access_token)
+    payload = build_google_sheet_payload(headers, rows)
+    column_count = max(len(headers), 1)
+    last_column = google_sheet_column_name(column_count)
+    last_row = max(len(payload), 1)
+    clear_range = build_google_sheet_range(sheet_name, f"A:{last_column}")
+    update_range = build_google_sheet_range(sheet_name, f"A1:{last_column}{last_row}")
+    request_headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
@@ -575,7 +700,7 @@ async def sync_customer_records_to_google_sheets(records: list[dict[str, str]]) 
         clear_response = await client.post(
             "https://sheets.googleapis.com/v4/spreadsheets/"
             f"{GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID}/values/{quote(clear_range, safe='')}:clear",
-            headers=headers,
+            headers=request_headers,
         )
         if clear_response.is_error:
             raise RuntimeError(
@@ -585,11 +710,11 @@ async def sync_customer_records_to_google_sheets(records: list[dict[str, str]]) 
         update_response = await client.put(
             "https://sheets.googleapis.com/v4/spreadsheets/"
             f"{GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID}/values/{quote(update_range, safe='')}",
-            headers=headers,
+            headers=request_headers,
             params={"valueInputOption": "RAW"},
             json={
                 "majorDimension": "ROWS",
-                "values": update_rows,
+                "values": payload,
             },
         )
         if update_response.is_error:
@@ -660,6 +785,46 @@ async def save_customer_records(redis_client: redis.Redis, records: list[Custome
         except OSError:
             pass
     return normalized_records
+
+
+async def sync_backup_artifacts(
+    redis_client: redis.Redis,
+    redis_backend: str,
+    *,
+    customers: list[dict[str, str]] | None = None,
+) -> None:
+    resolved_customers = customers if customers is not None else await load_customer_records(redis_client)
+    dashboard_snapshot = await build_metrics_snapshot_data(redis_backend, redis_client)
+    export_payload = build_backup_export_payload(resolved_customers, dashboard_snapshot)
+    write_local_backup_export(export_payload)
+
+    if not GOOGLE_SHEETS_BACKUP_ENABLED:
+        return
+
+    if not is_google_sheets_backup_ready():
+        message = "Google Sheets backup is enabled but not fully configured."
+        if GOOGLE_SHEETS_BACKUP_STRICT:
+            raise RuntimeError(message)
+        safe_console_print(f"[backup] {message}")
+        return
+
+    await sync_customer_records_to_google_sheets(resolved_customers)
+    await sync_dashboard_snapshot_to_google_sheets(dashboard_snapshot)
+
+
+async def run_backup_loop(redis_client: redis.Redis, redis_backend: str) -> None:
+    while True:
+        try:
+            await sync_backup_artifacts(redis_client, redis_backend)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            safe_console_print(f"[backup-loop] {trim_text(exc)}")
+
+        try:
+            await asyncio.sleep(GOOGLE_SHEETS_BACKUP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
 
 
 def generate_otp() -> str:
@@ -1334,7 +1499,7 @@ async def get_recent_events(redis_client: redis.Redis, limit: int = 25) -> list[
     return events
 
 
-async def build_metrics_snapshot(request: Request, redis_client: redis.Redis) -> dict:
+async def build_metrics_snapshot_data(redis_backend: str, redis_client: redis.Redis) -> dict:
     summary_raw = await redis_client.hgetall(SUMMARY_METRICS_KEY)
     summary = {field: int(float(value)) for field, value in summary_raw.items()}
     unique_request_phones = await redis_client.hlen(PHONE_REQUESTS_KEY)
@@ -1350,7 +1515,7 @@ async def build_metrics_snapshot(request: Request, redis_client: redis.Redis) ->
         "service": {
             "provider": OTP_PROVIDER,
             "dev_mode": DEV_OTP_MODE,
-            "redis_backend": request.app.state.redis_backend,
+            "redis_backend": redis_backend,
             "admin_dashboard_enabled": ADMIN_DASHBOARD_ENABLED,
             "admin_dashboard_auth_configured": ADMIN_DASHBOARD_AUTH_CONFIGURED,
             "otp_ttl_seconds": OTP_TTL_SECONDS,
@@ -1725,9 +1890,9 @@ async def admin_customers_save(request: Request, payload: CustomerRecordsPayload
     require_admin_request(request)
     customers = await save_customer_records(redis_client, payload.customers)
     try:
-        await sync_customer_records_to_google_sheets(customers)
+        await sync_backup_artifacts(redis_client, request.app.state.redis_backend, customers=customers)
     except Exception as exc:
-        safe_console_print(f"[google-sheets-backup] {trim_text(exc)}")
+        safe_console_print(f"[backup] {trim_text(exc)}")
         if GOOGLE_SHEETS_BACKUP_ENABLED and GOOGLE_SHEETS_BACKUP_STRICT:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"customers": customers}
@@ -1749,7 +1914,7 @@ async def health(request: Request, redis_client: redis.Redis = Depends(get_redis
 @app.get("/admin/metrics")
 async def admin_metrics(request: Request, redis_client: redis.Redis = Depends(get_redis)):
     await redis_client.ping()
-    return await build_metrics_snapshot(request, redis_client)
+    return await build_metrics_snapshot_data(request.app.state.redis_backend, redis_client)
 
 
 @app.post("/api/request-otp", response_model=StaffAssistedRequestResponse)

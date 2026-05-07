@@ -67,6 +67,8 @@ Frontend source lives in `frontend/` and builds into `static/`.
 - Set `USE_FAKE_REDIS=false`
 - Set a real `REDIS_URL`
 - Customer records and dashboard metrics are both stored in Redis, so they survive deploys as long as the Redis service remains attached.
+- Turn on `GOOGLE_SHEETS_BACKUP_ENABLED=true` and provide `GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID` plus a Google service account to keep a second copy in Google Sheets.
+- The app also writes a local snapshot export to `data/backups/latest-backup.json` on each backup cycle.
 - Rotate SMS credentials if they were ever exposed
 - Keep `/ops.html` behind admin auth only
 
@@ -103,22 +105,25 @@ Notes:
 
 ## Optional Google Sheets Backup
 
-Customer records can auto-backup to Google Sheets whenever `/admin/customers` saves data.
+Customer records and dashboard snapshots can auto-backup to Google Sheets on save and on a periodic timer.
 
 Required environment variables:
 
 - `GOOGLE_SHEETS_BACKUP_ENABLED=true`
 - `GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID`
 - `GOOGLE_SHEETS_BACKUP_SHEET_NAME`
+- `GOOGLE_SHEETS_BACKUP_DASHBOARD_SHEET_NAME`
 - `GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE` or `GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON`
 
 Optional related variables:
 
 - `GOOGLE_SHEETS_BACKUP_STRICT=false`
+- `GOOGLE_SHEETS_BACKUP_INTERVAL_SECONDS=300`
 - `GOOGLE_SHEETS_BACKUP_TIMEOUT_SECONDS=15`
 
 Setup notes:
 
 - Share the target spreadsheet with the service account email from your Google service account
-- The backup rewrites columns `A:D` on the configured sheet using headers `ID`, `Name`, `PhoneNumber`, `OTP`
+- The customer backup rewrites columns `A:E` on the configured customer sheet using headers `ID`, `Name`, `PhoneNumber`, `OTP`, `Timestamp`
+- The dashboard backup rewrites a separate sheet using rows for summary, provider health, recent events, and top phone metrics
 - With `GOOGLE_SHEETS_BACKUP_STRICT=false`, local save still succeeds even if Google Sheets sync fails
