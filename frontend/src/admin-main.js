@@ -373,7 +373,7 @@ createApp({
       authenticated: false,
       loading: false,
       verifyBusy: false,
-      activeSection: "dashboard",
+      activeSection: "verify-phone",
       metrics: null,
       customers: [],
       editingCustomerId: null,
@@ -415,7 +415,7 @@ createApp({
     const providers = computed(() => Array.isArray(state.metrics?.providers) ? state.metrics.providers : []);
     const recentEvents = computed(() => Array.isArray(state.metrics?.recent_events) ? state.metrics.recent_events.slice(0, 8) : []);
     const currentSectionMeta = computed(() => {
-      const config = sectionConfig[state.activeSection] || sectionConfig.dashboard;
+      const config = sectionConfig[state.activeSection] || sectionConfig["verify-phone"];
       return {
         ...config,
         kicker: text.value[config.kickerKey] || ""
@@ -600,15 +600,15 @@ createApp({
     }
 
     function setActiveSection(sectionName, syncHash = true) {
-      const nextSection = sectionConfig[sectionName] ? sectionName : "dashboard";
+      const nextSection = sectionConfig[sectionName] ? sectionName : "verify-phone";
       state.activeSection = nextSection;
       if (syncHash) {
-        window.location.hash = nextSection === "dashboard" ? "" : nextSection;
+        window.location.hash = nextSection === "verify-phone" ? "" : nextSection;
       }
     }
 
     function syncSectionFromHash() {
-      setActiveSection(window.location.hash.replace("#", "") || "dashboard", false);
+      setActiveSection(window.location.hash.replace("#", "") || "verify-phone", false);
     }
 
     function stopCountdown() {
