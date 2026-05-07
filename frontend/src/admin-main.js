@@ -684,7 +684,7 @@ createApp({
         : fallbackSection;
       state.activeSection = nextSection;
       if (syncHash) {
-        window.location.hash = nextSection === "verify-phone" ? "" : nextSection;
+        window.location.hash = nextSection === "verify-phone" ? "verify-phone" : nextSection;
       }
     }
 
