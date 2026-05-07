@@ -23,6 +23,10 @@ const translationsEn = {
   "dashboard_desc": "System overview and provider activity.",
   "verify_phone_title": "Verify Phone",
   "verify_phone_copy": "Use this page to enter customer details, save them, send OTP, and verify.",
+  "verify_flow_step1_title": "Customer Details",
+  "verify_flow_step2_title": "OTP Verification",
+  "verify_flow_step2_hint": "Complete customer details first, then request an OTP to unlock the verification step.",
+  "verify_flow_auto_save_note": "After a successful verification, the customer record is saved automatically.",
   "customers_title": "Customers",
   "customers_copy": "This page is for simple viewing, import, export, and template download.",
   "recent_activity": "Recent Activity",
@@ -130,6 +134,10 @@ const translationsTh = {
   "dashboard_desc": "ภาพรวมระบบและกิจกรรมของผู้ให้บริการ",
   "verify_phone_title": "ยืนยันเบอร์โทร",
   "verify_phone_copy": "ใช้หน้านี้เพื่อกรอกรายละเอียดลูกค้า บันทึก ส่ง OTP และยืนยัน",
+  "verify_flow_step1_title": "ข้อมูลลูกค้า",
+  "verify_flow_step2_title": "ยืนยัน OTP",
+  "verify_flow_step2_hint": "กรอกข้อมูลลูกค้าให้ครบก่อน แล้วค่อยขอ OTP เพื่อปลดล็อกขั้นตอนยืนยัน",
+  "verify_flow_auto_save_note": "หลังยืนยันสำเร็จ ระบบจะบันทึกข้อมูลลูกค้าให้อัตโนมัติ",
   "customers_title": "ลูกค้า",
   "customers_copy": "หน้านี้สำหรับดูข้อมูล นำเข้า ส่งออก และดาวน์โหลดเทมเพลต",
   "recent_activity": "กิจกรรมล่าสุด",
@@ -237,6 +245,10 @@ const translationsKh = {
   "dashboard_desc": "ទិដ្ឋភាពទូទៅនៃប្រព័ន្ធ និងសកម្មភាពអ្នកផ្តល់សេវា",
   "verify_phone_title": "ផ្ទៀងផ្ទាត់លេខទូរស័ព្ទ",
   "verify_phone_copy": "ប្រើទំព័រនេះដើម្បីបញ្ចូលព័ត៌មានអតិថិជន រក្សាទុក ផ្ញើ OTP និងផ្ទៀងផ្ទាត់",
+  "verify_flow_step1_title": "ព័ត៌មានអតិថិជន",
+  "verify_flow_step2_title": "ផ្ទៀងផ្ទាត់ OTP",
+  "verify_flow_step2_hint": "បំពេញព័ត៌មានអតិថិជនឱ្យរួចសិន បន្ទាប់មកស្នើ OTP ដើម្បីបើកជំហានផ្ទៀងផ្ទាត់",
+  "verify_flow_auto_save_note": "បន្ទាប់ពីផ្ទៀងផ្ទាត់ជោគជ័យ កំណត់ត្រាអតិថិជននឹងត្រូវបានរក្សាទុកដោយស្វ័យប្រវត្តិ",
   "customers_title": "អតិថិជន",
   "customers_copy": "ទំព័រនេះសម្រាប់មើលព័ត៌មាន នាំចូល នាំចេញ និងទាញយកគំរូ",
   "recent_activity": "សកម្មភាពថ្មីៗ",
@@ -363,6 +375,7 @@ createApp({
     const currentLang = ref(localStorage.getItem("otp_lang") || "th");
     const currentTheme = ref(localStorage.getItem("icash_theme") || "dark");
     const customerFileInput = ref(null);
+    const otpInput = ref(null);
     const refreshTimer = ref(null);
     const countdownTimer = ref(null);
     const popupTimer = ref(null);
@@ -843,6 +856,11 @@ createApp({
 
     async function requestStaffOtp() {
       clearStatus("verify");
+      if (!state.verifyForm.id.trim() || !state.verifyForm.name.trim() || !state.verifyForm.phone_number.trim()) {
+        setLocalizedStatus("verify", "customer_form_invalid", "error");
+        return;
+      }
+
       if (!state.verifyForm.phone_number.trim()) {
         setLocalizedStatus("verify", "verify_phone_required", "error");
         return;
@@ -863,6 +881,8 @@ createApp({
         state.verifyStepReady = true;
         startVerifyCountdown(data.expires_in || 0);
         setLocalizedStatus("verify", "sent_to", "success", { phone: state.verifyForm.phone_number.trim() });
+        await nextTick();
+        otpInput.value?.focus();
       } catch (error) {
         setStatus("verify", error?.message || text.value.request_failed, "error");
       }
@@ -870,6 +890,11 @@ createApp({
 
     async function verifyStaffOtp() {
       clearStatus("verify");
+      if (!state.verifyStepReady) {
+        setLocalizedStatus("verify", "verify_flow_step2_hint", "error");
+        return;
+      }
+
       const phone = state.verifyForm.phone_number.trim();
       const otp = state.verifyForm.otp.trim();
 
@@ -998,6 +1023,7 @@ createApp({
       currentLang,
       currentTheme,
       customerFileInput,
+      otpInput,
       summaryCards,
       providers,
       recentEvents,
@@ -1197,40 +1223,69 @@ createApp({
                   </div>
                 </div>
 
-                <div class="field-grid">
-                  <div class="field">
-                    <label>{{ text.label_customer_id }}</label>
-                    <input v-model="state.verifyForm.id" type="text" placeholder="CUS-001">
-                  </div>
-                  <div class="field">
-                    <label>{{ text.label_customer_name }}</label>
-                    <input v-model="state.verifyForm.name" type="text" placeholder="Sokha Chan">
-                  </div>
-                  <div class="field">
-                    <label>{{ text.label_phone }}</label>
-                    <input v-model="state.verifyForm.phone_number" type="text" placeholder="0971234567">
-                  </div>
-                  <div class="field">
-                    <label>{{ text.label_customer_otp }}</label>
-                    <input v-model="state.verifyForm.otp" type="text" maxlength="6" inputmode="numeric" placeholder="123456">
-                  </div>
-                </div>
+                <div class="workflow-stack">
+                  <section class="workflow-step">
+                      <div class="workflow-step-head">
+                        <div class="workflow-step-badge">01</div>
+                        <div>
+                          <h4>{{ text.verify_flow_step1_title }}</h4>
+                          <p>{{ text.verify_phone_copy }}</p>
+                        </div>
+                      </div>
 
-                <div class="button-row">
-                  <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="saveVerifyCustomerRecord()">{{ text.btn_save_customer }}</button>
-                  <button type="button" class="button" :disabled="state.verifyBusy" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
-                  <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="resetVerifyForm">{{ text.btn_reset }}</button>
-                </div>
+                      <div class="workflow-fields">
+                        <div class="field">
+                          <label>{{ text.label_customer_id }}</label>
+                          <input v-model="state.verifyForm.id" type="text" placeholder="CUS-001">
+                        </div>
+                        <div class="field">
+                          <label>{{ text.label_customer_name }}</label>
+                          <input v-model="state.verifyForm.name" type="text" placeholder="Sokha Chan">
+                        </div>
+                        <div class="field">
+                          <label>{{ text.label_phone }}</label>
+                          <input v-model="state.verifyForm.phone_number" type="text" placeholder="0971234567">
+                        </div>
+                      </div>
 
-                <div v-if="state.verifyStepReady">
-                  <div class="note-panel">
-                    <strong>{{ text.verify_step_ready }}</strong>
-                    <div>{{ text.sent_to }}: <strong>{{ state.verifyForm.phone_number || '-' }}</strong></div>
-                    <div>{{ text.expires_in }}: <strong>{{ verifyCountdownText }}</strong></div>
-                  </div>
-                  <div class="button-row">
-                    <button type="button" class="button" :disabled="state.verifyBusy" @click="verifyStaffOtp">{{ text.btn_verify_otp }}</button>
-                  </div>
+                      <div class="button-row workflow-actions">
+                        <button type="button" class="button" :disabled="state.verifyBusy" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
+                        <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="resetVerifyForm">{{ text.btn_reset }}</button>
+                      </div>
+                  </section>
+
+                  <section class="workflow-step" :class="{ locked: !state.verifyStepReady }">
+                      <div class="workflow-step-head">
+                        <div class="workflow-step-badge">02</div>
+                        <div>
+                          <h4>{{ text.verify_flow_step2_title }}</h4>
+                          <p>{{ text.verify_flow_auto_save_note }}</p>
+                        </div>
+                      </div>
+
+                      <div v-if="!state.verifyStepReady" class="note-panel workflow-lock">
+                        {{ text.verify_flow_step2_hint }}
+                      </div>
+
+                      <template v-else>
+                        <div class="workflow-fields">
+                          <div class="field">
+                            <label>{{ text.label_customer_otp }}</label>
+                            <input ref="otpInput" v-model="state.verifyForm.otp" type="text" maxlength="6" inputmode="numeric" placeholder="123456">
+                          </div>
+                        </div>
+
+                        <div class="note-panel">
+                          <strong>{{ text.verify_step_ready }}</strong>
+                          <div>{{ text.sent_to }}: <strong>{{ state.verifyForm.phone_number || '-' }}</strong></div>
+                          <div>{{ text.expires_in }}: <strong>{{ verifyCountdownText }}</strong></div>
+                        </div>
+
+                        <div class="button-row workflow-actions">
+                          <button type="button" class="button" :disabled="state.verifyBusy" @click="verifyStaffOtp">{{ text.btn_verify_otp }}</button>
+                        </div>
+                      </template>
+                  </section>
                 </div>
 
                 <div v-if="getStatusMessage('verify')" class="status-panel" :class="state.status.verify.type">

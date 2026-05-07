@@ -608,6 +608,82 @@ html[data-theme="light"] .metric-card {
   gap: 16px;
 }
 
+.workflow-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.workflow-step {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.14));
+}
+
+html[data-theme="dark"] .workflow-step {
+  background: linear-gradient(180deg, rgba(11, 31, 49, 0.78), rgba(11, 31, 49, 0.58));
+}
+
+.workflow-step.locked {
+  opacity: 0.82;
+}
+
+.workflow-step-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.workflow-step-head h4 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-dark);
+}
+
+html[data-theme="dark"] .workflow-step-head h4 {
+  color: #eef8ff;
+}
+
+.workflow-step-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.workflow-step-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(196, 230, 255, 0.66));
+  color: var(--primary);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+html[data-theme="dark"] .workflow-step-badge {
+  background: linear-gradient(180deg, rgba(82, 143, 199, 0.38), rgba(31, 72, 109, 0.4));
+  color: #eef8ff;
+}
+
+.workflow-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.workflow-actions {
+  margin-top: 0;
+}
+
+.workflow-lock {
+  margin-top: 0;
+}
+
 .field {
   margin-bottom: 16px;
 }
