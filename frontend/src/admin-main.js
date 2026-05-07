@@ -94,9 +94,20 @@ const translationsEn = {
   "label_role": "Role",
   "label_created_at": "Created At",
   "btn_create_staff": "Create Staff",
+  "btn_change_password": "Change Password",
+  "btn_update_password": "Update Password",
   "staff_user_created": "Staff user created successfully.",
   "staff_user_exists": "A user with this username already exists.",
   "staff_user_invalid": "Please enter a username and password.",
+  "staff_password_change_title": "Change Staff Password",
+  "staff_password_change_copy": "Choose a staff account, enter a new password, and save it here.",
+  "label_staff_target_username": "Selected staff username",
+  "label_staff_new_password": "New password",
+  "staff_password_updated": "Staff password updated successfully.",
+  "staff_password_invalid": "Please select a staff user and enter a new password.",
+  "staff_user_deleted": "Staff user deleted successfully.",
+  "staff_user_protected": "Protected account",
+  "staff_user_delete_confirm": "Delete staff user {username}?",
   "users_loaded": "Staff users loaded.",
   "users_empty": "No staff users yet.",
   "section_kicker_users": "Users",
@@ -441,6 +452,10 @@ createApp({
         otp: ""
       },
       userForm: {
+        username: "",
+        password: ""
+      },
+      staffPasswordForm: {
         username: "",
         password: ""
       },
@@ -861,6 +876,8 @@ createApp({
         state.adminUsers = [];
         state.userForm.username = "";
         state.userForm.password = "";
+        state.staffPasswordForm.username = "";
+        state.staffPasswordForm.password = "";
       }
     }
 
@@ -900,6 +917,8 @@ createApp({
       state.adminUsers = [];
       state.userForm.username = "";
       state.userForm.password = "";
+      state.staffPasswordForm.username = "";
+      state.staffPasswordForm.password = "";
       state.metrics = null;
       stopRefreshTimer();
       resetVerifyForm();
@@ -1221,6 +1240,84 @@ createApp({
       }
     }
 
+    function clearStaffPasswordForm() {
+      state.staffPasswordForm.username = "";
+      state.staffPasswordForm.password = "";
+    }
+
+    function prepareStaffPasswordChange(user) {
+      if (!canManageUsers.value || !user || user.role !== "staff") {
+        return;
+      }
+      clearStatus("users");
+      state.staffPasswordForm.username = user.username || "";
+      state.staffPasswordForm.password = "";
+    }
+
+    async function updateStaffPassword() {
+      clearStatus("users");
+      if (!canManageUsers.value) {
+        return;
+      }
+
+      const username = state.staffPasswordForm.username.trim();
+      const password = state.staffPasswordForm.password.trim();
+      if (!username || !password) {
+        setLocalizedStatus("users", "staff_password_invalid", "error");
+        return;
+      }
+
+      try {
+        const response = await fetch(`/admin/users/${encodeURIComponent(username)}/password`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password })
+        });
+        const data = await parseResponse(response);
+        if (!response.ok) {
+          setStatus("users", getFetchErrorMessage(data, text.value.save_failed), "error");
+          return;
+        }
+
+        clearStaffPasswordForm();
+        setLocalizedStatus("users", "staff_password_updated", "success");
+        await loadAdminUsers();
+      } catch (error) {
+        setStatus("users", error?.message || text.value.save_failed, "error");
+      }
+    }
+
+    async function deleteStaffUser(user) {
+      clearStatus("users");
+      if (!canManageUsers.value || !user || user.role !== "staff") {
+        return;
+      }
+
+      const confirmMessage = text.value.staff_user_delete_confirm.replace("{username}", user.username || "-");
+      if (!window.confirm(confirmMessage)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/admin/users/${encodeURIComponent(user.username)}`, {
+          method: "DELETE"
+        });
+        const data = await parseResponse(response);
+        if (!response.ok) {
+          setStatus("users", getFetchErrorMessage(data, text.value.save_failed), "error");
+          return;
+        }
+
+        if (state.staffPasswordForm.username === user.username) {
+          clearStaffPasswordForm();
+        }
+        setLocalizedStatus("users", "staff_user_deleted", "success");
+        await loadAdminUsers();
+      } catch (error) {
+        setStatus("users", error?.message || text.value.save_failed, "error");
+      }
+    }
+
     onMounted(() => {
       window.addEventListener("hashchange", syncSectionFromHash);
       checkAuth().catch((error) => console.error(error));
@@ -1263,6 +1360,10 @@ createApp({
       exportCustomers,
       downloadTemplate,
       createStaffUser,
+      prepareStaffPasswordChange,
+      updateStaffPassword,
+      deleteStaffUser,
+      clearStaffPasswordForm,
       saveVerifyCustomerRecord,
       editCustomer,
       deleteCustomer,
@@ -1625,6 +1726,33 @@ createApp({
                   <div class="users-panel">
                     <div class="card-head compact">
                       <div>
+                        <h3 class="card-title">{{ text.staff_password_change_title }}</h3>
+                        <p class="card-copy">{{ text.staff_password_change_copy }}</p>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label>{{ text.label_staff_target_username }}</label>
+                      <input
+                        :value="state.staffPasswordForm.username || '-'"
+                        type="text"
+                        readonly
+                        disabled
+                        placeholder="-"
+                      >
+                    </div>
+                    <div class="field">
+                      <label>{{ text.label_staff_new_password }}</label>
+                      <input v-model="state.staffPasswordForm.password" type="password" autocomplete="new-password" placeholder="NewPass123!">
+                    </div>
+                    <div class="button-row">
+                      <button type="button" class="button" :disabled="!state.staffPasswordForm.username" @click="updateStaffPassword">{{ text.btn_update_password }}</button>
+                      <button type="button" class="ghost-button" :disabled="!state.staffPasswordForm.username" @click="clearStaffPasswordForm">{{ text.btn_reset }}</button>
+                    </div>
+                  </div>
+
+                  <div class="users-panel">
+                    <div class="card-head compact">
+                      <div>
                         <h3 class="card-title">{{ text.nav_users }}</h3>
                         <p class="card-copy">{{ state.adminUsers.length ? text.users_loaded : text.users_empty }}</p>
                       </div>
@@ -1636,16 +1764,24 @@ createApp({
                             <th>{{ text.label_username }}</th>
                             <th>{{ text.label_role }}</th>
                             <th>{{ text.label_created_at }}</th>
+                            <th>{{ text.table_actions }}</th>
                           </tr>
                         </thead>
                         <tbody>
                           <tr v-if="!state.adminUsers.length">
-                            <td colspan="3" class="empty-state">{{ text.users_empty }}</td>
+                            <td colspan="4" class="empty-state">{{ text.users_empty }}</td>
                           </tr>
                           <tr v-for="user in state.adminUsers" :key="user.username">
                             <td>{{ user.username }}</td>
                             <td>{{ user.role === 'super_admin' ? text.role_super_admin : text.role_staff }}</td>
                             <td>{{ formatCustomerTimestamp(user.created_at, currentLang) }}</td>
+                            <td class="actions-cell">
+                              <div v-if="user.role === 'staff'" class="table-actions">
+                                <button type="button" class="table-button edit" @click="prepareStaffPasswordChange(user)">{{ text.btn_change_password }}</button>
+                                <button type="button" class="table-button delete" @click="deleteStaffUser(user)">{{ text.btn_delete }}</button>
+                              </div>
+                              <span v-else class="muted-copy">{{ text.staff_user_protected }}</span>
+                            </td>
                           </tr>
                         </tbody>
                       </table>

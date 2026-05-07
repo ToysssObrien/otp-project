@@ -163,6 +163,7 @@ PROVIDER_METRICS_PREFIX = "otp_metrics:provider:"
 CUSTOMER_RECORDS_KEY = "otp_data:customers"
 ADMIN_USERS_KEY = "otp_admin:users"
 ADMIN_SESSION_PREFIX = "otp_admin:session:"
+ADMIN_SESSION_INDEX_PREFIX = "otp_admin:session_index:"
 LEGACY_CUSTOMERS_FILE = Path(__file__).resolve().parent / "data" / "customers.json"
 BACKUP_EXPORT_DIR = Path(__file__).resolve().parent / "data" / "backups"
 BACKUP_EXPORT_FILE = BACKUP_EXPORT_DIR / "latest-backup.json"
@@ -370,6 +371,15 @@ class AdminCreateUserResponse(BaseModel):
     user: AdminUserRecord
 
 
+class AdminUpdateUserPasswordRequest(BaseModel):
+    password: str = Field(..., min_length=6, examples=["NewStrongPass123!"])
+
+
+class AdminUpdateUserPasswordResponse(BaseModel):
+    message: str
+    user: AdminUserRecord
+
+
 class StaffAssistedRequestResponse(BaseModel):
     status: str
     expires_in: int
@@ -476,6 +486,10 @@ def admin_session_key(session_id: str) -> str:
     return f"{ADMIN_SESSION_PREFIX}{session_id}"
 
 
+def admin_session_index_key(username: str) -> str:
+    return f"{ADMIN_SESSION_INDEX_PREFIX}{username.strip().lower()}"
+
+
 def normalize_admin_user_record(raw_record: object) -> dict[str, str | bool]:
     if not isinstance(raw_record, dict):
         raise ValueError("Admin user record must be an object.")
@@ -539,6 +553,20 @@ async def load_admin_users(redis_client: redis.Redis) -> list[dict[str, str | bo
 
 async def save_admin_users(redis_client: redis.Redis, users: list[dict[str, str | bool]]) -> None:
     await redis_client.set(admin_users_key(), json.dumps(users, ensure_ascii=False))
+
+
+async def revoke_admin_sessions(redis_client: redis.Redis, username: str) -> None:
+    index_key = admin_session_index_key(username)
+    session_ids = await redis_client.smembers(index_key)
+    if session_ids:
+        await redis_client.delete(*[admin_session_key(session_id) for session_id in session_ids])
+    await redis_client.delete(index_key)
+
+
+async def remove_admin_session_from_index(redis_client: redis.Redis, username: str, session_id: str) -> None:
+    if not username or not session_id:
+        return
+    await redis_client.srem(admin_session_index_key(username), session_id)
 
 
 async def sync_seed_admin_users(redis_client: redis.Redis) -> None:
@@ -611,6 +639,7 @@ async def create_admin_session(redis_client: redis.Redis, user: dict[str, str | 
         "expires_at": expires_at,
     }
     await redis_client.setex(admin_session_key(session_id), ADMIN_SESSION_DURATION_SECONDS, json.dumps(session_payload, ensure_ascii=False))
+    await redis_client.sadd(admin_session_index_key(str(user["username"])), session_id)
     return session_id
 
 
@@ -637,11 +666,13 @@ async def load_admin_session(redis_client: redis.Redis, session_id: str | None) 
         return None
     if expires_at < int(time.time()):
         await redis_client.delete(admin_session_key(session_id))
+        await remove_admin_session_from_index(redis_client, username, session_id)
         return None
 
     user = await find_admin_user(redis_client, username)
     if not user or str(user.get("role")) != role:
         await redis_client.delete(admin_session_key(session_id))
+        await remove_admin_session_from_index(redis_client, username, session_id)
         return None
 
     return {
@@ -2129,7 +2160,10 @@ async def admin_login(login_request: AdminLoginRequest, redis_client: redis.Redi
 async def admin_logout(request: Request, redis_client: redis.Redis = Depends(get_redis)):
     session_id = request.cookies.get(ADMIN_SESSION_COOKIE_NAME)
     if session_id:
+        session_identity = await load_admin_session(redis_client, session_id)
         await redis_client.delete(admin_session_key(session_id))
+        if session_identity:
+            await remove_admin_session_from_index(redis_client, str(session_identity.get("username", "")), session_id)
     response = JSONResponse({"message": "Logged out successfully."})
     response.delete_cookie(key=ADMIN_SESSION_COOKIE_NAME, path="/")
     return response
@@ -2211,6 +2245,84 @@ async def admin_users_create(
         "message": "Staff user created successfully.",
         "user": admin_user_summary(created_user),
     }
+
+
+@app.patch("/admin/users/{username}/password", response_model=AdminUpdateUserPasswordResponse)
+async def admin_users_update_password(
+    username: str,
+    request: Request,
+    payload: AdminUpdateUserPasswordRequest,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_admin_role(request, redis_client, {ADMIN_ROLE_SUPER_ADMIN})
+
+    normalized_username = username.strip().lower()
+    if not normalized_username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+
+    users = await load_admin_users(redis_client)
+    target_index = next(
+        (
+            index
+            for index, user in enumerate(users)
+            if str(user.get("username", "")).lower() == normalized_username and bool(user.get("active", True))
+        ),
+        -1,
+    )
+    if target_index < 0:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    target_user = users[target_index]
+    if str(target_user.get("role")) != ADMIN_ROLE_STAFF:
+        raise HTTPException(status_code=403, detail="Only staff users can be managed here.")
+
+    now = utc_now_iso()
+    target_user["password_hash"] = hash_admin_password(payload.password)
+    target_user["updated_at"] = now
+    users[target_index] = target_user
+    await save_admin_users(redis_client, users)
+    await revoke_admin_sessions(redis_client, str(target_user.get("username", "")))
+    return {
+        "message": "Staff password updated successfully.",
+        "user": admin_user_summary(target_user),
+    }
+
+
+@app.delete("/admin/users/{username}", response_model=SuccessResponse)
+async def admin_users_delete(
+    username: str,
+    request: Request,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_admin_role(request, redis_client, {ADMIN_ROLE_SUPER_ADMIN})
+
+    normalized_username = username.strip().lower()
+    if not normalized_username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+
+    users = await load_admin_users(redis_client)
+    target_user = next(
+        (
+            user
+            for user in users
+            if str(user.get("username", "")).lower() == normalized_username and bool(user.get("active", True))
+        ),
+        None,
+    )
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if str(target_user.get("role")) != ADMIN_ROLE_STAFF:
+        raise HTTPException(status_code=403, detail="Only staff users can be deleted here.")
+
+    remaining_users = [
+        user
+        for user in users
+        if str(user.get("username", "")).lower() != normalized_username
+    ]
+    await save_admin_users(redis_client, remaining_users)
+    await revoke_admin_sessions(redis_client, str(target_user.get("username", "")))
+    return {"message": "Staff user deleted successfully."}
 
 
 @app.get("/health", response_model=HealthResponse)
