@@ -116,13 +116,11 @@ ADMIN_DASHBOARD_USERNAME = os.getenv("ADMIN_DASHBOARD_USERNAME", "").strip()
 ADMIN_DASHBOARD_PASSWORD = os.getenv("ADMIN_DASHBOARD_PASSWORD", "").strip()
 ADMIN_DASHBOARD_REALM = os.getenv("ADMIN_DASHBOARD_REALM", "OTP Admin Monitor").strip() or "OTP Admin Monitor"
 ADMIN_DASHBOARD_AUTH_CONFIGURED = bool(ADMIN_DASHBOARD_USERNAME and ADMIN_DASHBOARD_PASSWORD)
+ADMIN_ROLE_SUPER_ADMIN = "super_admin"
+ADMIN_ROLE_STAFF = "staff"
 ADMIN_SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE_NAME", "otp_admin_session").strip() or "otp_admin_session"
 ADMIN_SESSION_DURATION_SECONDS = validate_positive_int("ADMIN_SESSION_DURATION_SECONDS", 28800)
 ADMIN_SESSION_COOKIE_SECURE = env_flag("ADMIN_SESSION_COOKIE_SECURE", not DEV_OTP_MODE)
-ADMIN_SESSION_SECRET = (
-    os.getenv("ADMIN_SESSION_SECRET", "").strip()
-    or f"{ADMIN_DASHBOARD_USERNAME}:{ADMIN_DASHBOARD_PASSWORD}:otp-admin-session"
-)
 REQUEST_OTP_RATE_LIMIT = os.getenv(
     "REQUEST_OTP_RATE_LIMIT",
     "30/minute" if DEV_OTP_MODE else "1/minute",
@@ -163,6 +161,8 @@ PHONE_VERIFY_SUCCESS_KEY = "otp_metrics:phone:verify_success"
 RECENT_EVENTS_KEY = "otp_metrics:events"
 PROVIDER_METRICS_PREFIX = "otp_metrics:provider:"
 CUSTOMER_RECORDS_KEY = "otp_data:customers"
+ADMIN_USERS_KEY = "otp_admin:users"
+ADMIN_SESSION_PREFIX = "otp_admin:session:"
 LEGACY_CUSTOMERS_FILE = Path(__file__).resolve().parent / "data" / "customers.json"
 BACKUP_EXPORT_DIR = Path(__file__).resolve().parent / "data" / "backups"
 BACKUP_EXPORT_FILE = BACKUP_EXPORT_DIR / "latest-backup.json"
@@ -201,6 +201,8 @@ async def lifespan(app: FastAPI):
 
     app.state.redis = redis_client
     app.state.redis_backend = redis_backend
+
+    await sync_seed_admin_users(redis_client)
 
     if GOOGLE_SHEETS_BACKUP_ENABLED and GOOGLE_SHEETS_BACKUP_STRICT and not is_google_sheets_backup_ready():
         raise RuntimeError(
@@ -256,7 +258,8 @@ async def disable_cache(request: Request, call_next):
     if ADMIN_DASHBOARD_ENABLED and is_protected_admin_path(request.url.path):
         if not ADMIN_DASHBOARD_AUTH_CONFIGURED:
             return build_admin_unavailable_response()
-        if not is_admin_authenticated(request):
+        redis_client = getattr(request.app.state, "redis", None)
+        if redis_client is None or not await is_admin_authenticated(request, redis_client):
             return build_admin_auth_response()
 
     response = await call_next(request)
@@ -332,12 +335,39 @@ class SuccessResponse(BaseModel):
 class AdminLoginResponse(BaseModel):
     message: str
     next_path: str
+    role: str | None = None
 
 
 class AdminSessionResponse(BaseModel):
     authenticated: bool
+    username: str | None = None
+    role: str | None = None
+    permissions: dict[str, bool] = Field(default_factory=dict)
     admin_dashboard_enabled: bool
     admin_dashboard_auth_configured: bool
+
+
+class AdminUserRecord(BaseModel):
+    username: str
+    role: str
+    origin: str = "manual"
+    created_at: str
+    updated_at: str
+    active: bool = True
+
+
+class AdminUsersResponse(BaseModel):
+    users: list[AdminUserRecord]
+
+
+class AdminCreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=1, examples=["staff01"])
+    password: str = Field(..., min_length=6, examples=["ChangeMe123!"])
+
+
+class AdminCreateUserResponse(BaseModel):
+    message: str
+    user: AdminUserRecord
 
 
 class StaffAssistedRequestResponse(BaseModel):
@@ -403,74 +433,302 @@ def build_admin_unavailable_response() -> JSONResponse:
     )
 
 
-def is_valid_admin_auth_header(auth_header: str) -> bool:
-    if not auth_header or not auth_header.startswith("Basic "):
-        return False
+def hash_admin_password(password: str, salt: bytes | None = None) -> str:
+    iterations = 390_000
+    salt_bytes = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt_bytes, iterations)
+    salt_text = base64.urlsafe_b64encode(salt_bytes).decode("ascii").rstrip("=")
+    digest_text = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return f"pbkdf2_sha256${iterations}${salt_text}${digest_text}"
 
+
+def verify_admin_password(password: str, password_hash: str) -> bool:
     try:
-        encoded = auth_header.split(" ", 1)[1].strip()
-        decoded = base64.b64decode(encoded).decode("utf-8")
-        username, password = decoded.split(":", 1)
+        algorithm, iterations_raw, salt_text, digest_text = password_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_raw)
+        salt_bytes = base64.urlsafe_b64decode(f"{salt_text}===")
+        expected_digest = base64.urlsafe_b64decode(f"{digest_text}===")
     except Exception:
         return False
 
-    return secrets.compare_digest(username, ADMIN_DASHBOARD_USERNAME) and secrets.compare_digest(
-        password,
-        ADMIN_DASHBOARD_PASSWORD,
+    candidate_digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt_bytes, iterations)
+    return secrets.compare_digest(candidate_digest, expected_digest)
+
+
+def build_admin_permissions(role: str) -> dict[str, bool]:
+    is_super_admin = role == ADMIN_ROLE_SUPER_ADMIN
+    return {
+        "can_view_dashboard": is_super_admin,
+        "can_manage_users": is_super_admin,
+        "can_view_customers": True,
+        "can_edit_customers": is_super_admin,
+        "can_use_verify": True,
+    }
+
+
+def admin_users_key() -> str:
+    return ADMIN_USERS_KEY
+
+
+def admin_session_key(session_id: str) -> str:
+    return f"{ADMIN_SESSION_PREFIX}{session_id}"
+
+
+def normalize_admin_user_record(raw_record: object) -> dict[str, str | bool]:
+    if not isinstance(raw_record, dict):
+        raise ValueError("Admin user record must be an object.")
+
+    username = str(raw_record.get("username", "")).strip()
+    role = str(raw_record.get("role", ADMIN_ROLE_STAFF)).strip() or ADMIN_ROLE_STAFF
+    origin = str(raw_record.get("origin", "manual")).strip() or "manual"
+    password_hash = str(raw_record.get("password_hash", "")).strip()
+    created_at = str(raw_record.get("created_at", "")).strip() or utc_now_iso()
+    updated_at = str(raw_record.get("updated_at", "")).strip() or created_at
+    active = bool(raw_record.get("active", True))
+    if not username:
+        raise ValueError("Admin username is required.")
+    if role not in {ADMIN_ROLE_SUPER_ADMIN, ADMIN_ROLE_STAFF}:
+        raise ValueError("Invalid admin role.")
+    if not password_hash:
+        raise ValueError("Admin password hash is required.")
+    return {
+        "username": username,
+        "role": role,
+        "origin": origin,
+        "password_hash": password_hash,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "active": active,
+    }
+
+
+def admin_user_summary(record: dict[str, str | bool]) -> AdminUserRecord:
+    return AdminUserRecord(
+        username=str(record["username"]),
+        role=str(record["role"]),
+        origin=str(record["origin"]),
+        created_at=str(record["created_at"]),
+        updated_at=str(record["updated_at"]),
+        active=bool(record["active"]),
     )
 
 
-def create_admin_session_token(username: str) -> str:
-    expires_at = int(time.time()) + ADMIN_SESSION_DURATION_SECONDS
-    payload = f"{username}|{expires_at}"
-    signature = hmac.new(
-        ADMIN_SESSION_SECRET.encode("utf-8"),
-        payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    token = f"{payload}|{signature}"
-    return base64.urlsafe_b64encode(token.encode("utf-8")).decode("ascii")
-
-
-def validate_admin_session_token(token: str | None) -> bool:
-    if not token or not ADMIN_DASHBOARD_AUTH_CONFIGURED:
-        return False
+async def load_admin_users(redis_client: redis.Redis) -> list[dict[str, str | bool]]:
+    raw_users = await redis_client.get(admin_users_key())
+    if not raw_users:
+        return []
 
     try:
-        decoded = base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
-        username, expires_at_raw, provided_signature = decoded.rsplit("|", 2)
-        payload = f"{username}|{expires_at_raw}"
-        expected_signature = hmac.new(
-            ADMIN_SESSION_SECRET.encode("utf-8"),
-            payload.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        expires_at = int(expires_at_raw)
-    except Exception:
-        return False
+        parsed_users = json.loads(raw_users)
+    except json.JSONDecodeError:
+        return []
 
-    if not secrets.compare_digest(username, ADMIN_DASHBOARD_USERNAME):
-        return False
-    if not hmac.compare_digest(provided_signature, expected_signature):
-        return False
-    return expires_at >= int(time.time())
+    if not isinstance(parsed_users, list):
+        return []
+
+    normalized_users: list[dict[str, str | bool]] = []
+    for raw_user in parsed_users:
+        try:
+            normalized_users.append(normalize_admin_user_record(raw_user))
+        except Exception:
+            continue
+    return normalized_users
 
 
-def is_admin_authenticated(request: Request) -> bool:
+async def save_admin_users(redis_client: redis.Redis, users: list[dict[str, str | bool]]) -> None:
+    await redis_client.set(admin_users_key(), json.dumps(users, ensure_ascii=False))
+
+
+async def sync_seed_admin_users(redis_client: redis.Redis) -> None:
+    if not ADMIN_DASHBOARD_AUTH_CONFIGURED:
+        return
+
+    users = await load_admin_users(redis_client)
+    now = utc_now_iso()
+    seed_hash = hash_admin_password(ADMIN_DASHBOARD_PASSWORD)
+    updated_seed = False
+
+    for user in users:
+        if str(user.get("origin")) == "env" and str(user.get("role")) == ADMIN_ROLE_SUPER_ADMIN:
+            user["username"] = ADMIN_DASHBOARD_USERNAME
+            user["password_hash"] = seed_hash
+            user["updated_at"] = now
+            user["active"] = True
+            updated_seed = True
+            break
+
+    if not updated_seed:
+        users.append(
+            {
+                "username": ADMIN_DASHBOARD_USERNAME,
+                "role": ADMIN_ROLE_SUPER_ADMIN,
+                "origin": "env",
+                "password_hash": seed_hash,
+                "created_at": now,
+                "updated_at": now,
+                "active": True,
+            }
+        )
+
+    await save_admin_users(redis_client, users)
+
+
+async def find_admin_user(redis_client: redis.Redis, username: str) -> dict[str, str | bool] | None:
+    normalized_username = username.strip().lower()
+    if not normalized_username:
+        return None
+
+    for user in await load_admin_users(redis_client):
+        if str(user.get("username", "")).lower() == normalized_username and bool(user.get("active", True)):
+            return user
+    return None
+
+
+async def authenticate_admin_credentials(
+    redis_client: redis.Redis,
+    username: str,
+    password: str,
+) -> dict[str, str | bool] | None:
+    user = await find_admin_user(redis_client, username)
+    if not user:
+        return None
+
+    password_hash = str(user.get("password_hash", ""))
+    if not verify_admin_password(password, password_hash):
+        return None
+    return user
+
+
+async def create_admin_session(redis_client: redis.Redis, user: dict[str, str | bool]) -> str:
+    session_id = secrets.token_urlsafe(32)
+    expires_at = int(time.time()) + ADMIN_SESSION_DURATION_SECONDS
+    session_payload = {
+        "username": str(user["username"]),
+        "role": str(user["role"]),
+        "created_at": utc_now_iso(),
+        "expires_at": expires_at,
+    }
+    await redis_client.setex(admin_session_key(session_id), ADMIN_SESSION_DURATION_SECONDS, json.dumps(session_payload, ensure_ascii=False))
+    return session_id
+
+
+async def load_admin_session(redis_client: redis.Redis, session_id: str | None) -> dict[str, str | int] | None:
+    if not session_id:
+        return None
+
+    raw_session = await redis_client.get(admin_session_key(session_id))
+    if not raw_session:
+        return None
+
+    try:
+        session_payload = json.loads(raw_session)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(session_payload, dict):
+        return None
+
+    username = str(session_payload.get("username", "")).strip()
+    role = str(session_payload.get("role", "")).strip()
+    expires_at = int(session_payload.get("expires_at", 0))
+    if not username or role not in {ADMIN_ROLE_SUPER_ADMIN, ADMIN_ROLE_STAFF}:
+        return None
+    if expires_at < int(time.time()):
+        await redis_client.delete(admin_session_key(session_id))
+        return None
+
+    user = await find_admin_user(redis_client, username)
+    if not user or str(user.get("role")) != role:
+        await redis_client.delete(admin_session_key(session_id))
+        return None
+
+    return {
+        "username": username,
+        "role": role,
+        "expires_at": expires_at,
+    }
+
+
+async def get_admin_identity(request: Request, redis_client: redis.Redis) -> dict[str, object] | None:
+    session_identity = await load_admin_session(redis_client, request.cookies.get(ADMIN_SESSION_COOKIE_NAME))
+    if session_identity:
+        user = await find_admin_user(redis_client, str(session_identity["username"]))
+        if user:
+            return {
+                "username": str(user["username"]),
+                "role": str(user["role"]),
+                "permissions": build_admin_permissions(str(user["role"])),
+            }
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header and auth_header.startswith("Basic "):
+        try:
+            encoded = auth_header.split(" ", 1)[1].strip()
+            decoded = base64.b64decode(encoded).decode("utf-8")
+            username, password = decoded.split(":", 1)
+        except Exception:
+            return None
+
+        user = await authenticate_admin_credentials(redis_client, username, password)
+        if user:
+            return {
+                "username": str(user["username"]),
+                "role": str(user["role"]),
+                "permissions": build_admin_permissions(str(user["role"])),
+            }
+
+    return None
+
+
+async def is_admin_authenticated(request: Request, redis_client: redis.Redis) -> bool:
     if not ADMIN_DASHBOARD_AUTH_CONFIGURED:
         return False
-    if validate_admin_session_token(request.cookies.get(ADMIN_SESSION_COOKIE_NAME)):
-        return True
-    return is_valid_admin_auth_header(request.headers.get("Authorization", ""))
+    return (await get_admin_identity(request, redis_client)) is not None
 
 
-def require_admin_request(request: Request) -> None:
+async def require_admin_request(request: Request, redis_client: redis.Redis) -> dict[str, object]:
     if not ADMIN_DASHBOARD_ENABLED:
         raise HTTPException(status_code=404, detail="OTP admin monitor is disabled.")
     if not ADMIN_DASHBOARD_AUTH_CONFIGURED:
         raise HTTPException(status_code=503, detail="OTP admin monitor is enabled but credentials are not configured.")
-    if not is_admin_authenticated(request):
+
+    identity = await get_admin_identity(request, redis_client)
+    if not identity:
         raise HTTPException(status_code=401, detail="Authentication required for the OTP admin monitor.")
+    return identity
+
+
+async def require_admin_role(
+    request: Request,
+    redis_client: redis.Redis,
+    allowed_roles: set[str],
+) -> dict[str, object]:
+    identity = await require_admin_request(request, redis_client)
+    if str(identity.get("role")) not in allowed_roles:
+        raise HTTPException(status_code=403, detail="You do not have permission to access this resource.")
+    return identity
+
+
+def default_admin_next_path(role: str) -> str:
+    return "/ops.html#dashboard" if role == ADMIN_ROLE_SUPER_ADMIN else "/ops.html#verify-phone"
+
+
+def resolve_admin_next_path(requested_path: str, role: str) -> str:
+    default_path = default_admin_next_path(role)
+    if not is_safe_next_path(requested_path):
+        return default_path
+
+    if role == ADMIN_ROLE_SUPER_ADMIN:
+        if requested_path in {"/ops.html", "/"}:
+            return default_path
+        return requested_path
+
+    if requested_path in {"/ops.html", "/ops.html#verify-phone", "/ops.html#customers", "/verify-phone.html", "/customers.html"}:
+        return requested_path if requested_path != "/ops.html" else default_path
+
+    return default_path
 
 
 def normalize_customer_record(record: CustomerRecord) -> dict[str, str]:
@@ -1833,7 +2091,7 @@ async def customers_redirect():
 
 
 @app.post("/admin/login", response_model=AdminLoginResponse)
-async def admin_login(login_request: AdminLoginRequest):
+async def admin_login(login_request: AdminLoginRequest, redis_client: redis.Redis = Depends(get_redis)):
     if not ADMIN_DASHBOARD_ENABLED:
         raise HTTPException(status_code=404, detail="OTP admin monitor is disabled.")
 
@@ -1842,18 +2100,22 @@ async def admin_login(login_request: AdminLoginRequest):
 
     username = login_request.username.strip()
     password = login_request.password
-    next_path = login_request.next_path if is_safe_next_path(login_request.next_path) else "/ops.html"
+    identity = await authenticate_admin_credentials(redis_client, username, password)
 
-    if not (
-        secrets.compare_digest(username, ADMIN_DASHBOARD_USERNAME)
-        and secrets.compare_digest(password, ADMIN_DASHBOARD_PASSWORD)
-    ):
+    if not identity:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
-    response = JSONResponse({"message": "Login successful.", "next_path": next_path})
+    role = str(identity.get("role"))
+    response = JSONResponse(
+        {
+            "message": "Login successful.",
+            "next_path": resolve_admin_next_path(login_request.next_path, role),
+            "role": role,
+        }
+    )
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE_NAME,
-        value=create_admin_session_token(username),
+        value=await create_admin_session(redis_client, identity),
         max_age=ADMIN_SESSION_DURATION_SECONDS,
         httponly=True,
         samesite="lax",
@@ -1864,16 +2126,24 @@ async def admin_login(login_request: AdminLoginRequest):
 
 
 @app.post("/admin/logout", response_model=SuccessResponse)
-async def admin_logout():
+async def admin_logout(request: Request, redis_client: redis.Redis = Depends(get_redis)):
+    session_id = request.cookies.get(ADMIN_SESSION_COOKIE_NAME)
+    if session_id:
+        await redis_client.delete(admin_session_key(session_id))
     response = JSONResponse({"message": "Logged out successfully."})
     response.delete_cookie(key=ADMIN_SESSION_COOKIE_NAME, path="/")
     return response
 
 
 @app.get("/admin/session", response_model=AdminSessionResponse)
-async def admin_session_status(request: Request):
+async def admin_session_status(request: Request, redis_client: redis.Redis = Depends(get_redis)):
+    identity = await get_admin_identity(request, redis_client)
+    permissions = dict(identity.get("permissions", {})) if identity else {}
     return {
-        "authenticated": is_admin_authenticated(request),
+        "authenticated": identity is not None,
+        "username": identity.get("username") if identity else None,
+        "role": identity.get("role") if identity else None,
+        "permissions": permissions,
         "admin_dashboard_enabled": ADMIN_DASHBOARD_ENABLED,
         "admin_dashboard_auth_configured": ADMIN_DASHBOARD_AUTH_CONFIGURED,
     }
@@ -1881,13 +2151,13 @@ async def admin_session_status(request: Request):
 
 @app.get("/admin/customers", response_model=CustomerRecordsResponse)
 async def admin_customers_list(request: Request, redis_client: redis.Redis = Depends(get_redis)):
-    require_admin_request(request)
+    await require_admin_request(request, redis_client)
     return {"customers": await load_customer_records(redis_client)}
 
 
 @app.put("/admin/customers", response_model=CustomerRecordsResponse)
 async def admin_customers_save(request: Request, payload: CustomerRecordsPayload, redis_client: redis.Redis = Depends(get_redis)):
-    require_admin_request(request)
+    await require_admin_request(request, redis_client)
     customers = await save_customer_records(redis_client, payload.customers)
     try:
         await sync_backup_artifacts(redis_client, request.app.state.redis_backend, customers=customers)
@@ -1896,6 +2166,51 @@ async def admin_customers_save(request: Request, payload: CustomerRecordsPayload
         if GOOGLE_SHEETS_BACKUP_ENABLED and GOOGLE_SHEETS_BACKUP_STRICT:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"customers": customers}
+
+
+@app.get("/admin/users", response_model=AdminUsersResponse)
+async def admin_users_list(request: Request, redis_client: redis.Redis = Depends(get_redis)):
+    await require_admin_role(request, redis_client, {ADMIN_ROLE_SUPER_ADMIN})
+    users = await load_admin_users(redis_client)
+    return {"users": [admin_user_summary(user) for user in users]}
+
+
+@app.post("/admin/users", response_model=AdminCreateUserResponse)
+async def admin_users_create(
+    request: Request,
+    payload: AdminCreateUserRequest,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_admin_role(request, redis_client, {ADMIN_ROLE_SUPER_ADMIN})
+
+    username = payload.username.strip()
+    password = payload.password
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+    normalized_username = username.lower()
+    if normalized_username in {"admin", "superadmin", ADMIN_DASHBOARD_USERNAME.lower()}:
+        raise HTTPException(status_code=400, detail="Username is reserved.")
+
+    users = await load_admin_users(redis_client)
+    if any(str(user.get("username", "")).lower() == normalized_username and bool(user.get("active", True)) for user in users):
+        raise HTTPException(status_code=409, detail="A user with this username already exists.")
+
+    now = utc_now_iso()
+    created_user = {
+        "username": username,
+        "role": ADMIN_ROLE_STAFF,
+        "origin": "manual",
+        "password_hash": hash_admin_password(password),
+        "created_at": now,
+        "updated_at": now,
+        "active": True,
+    }
+    users.append(created_user)
+    await save_admin_users(redis_client, users)
+    return {
+        "message": "Staff user created successfully.",
+        "user": admin_user_summary(created_user),
+    }
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -1914,6 +2229,7 @@ async def health(request: Request, redis_client: redis.Redis = Depends(get_redis
 @app.get("/admin/metrics")
 async def admin_metrics(request: Request, redis_client: redis.Redis = Depends(get_redis)):
     await redis_client.ping()
+    await require_admin_role(request, redis_client, {ADMIN_ROLE_SUPER_ADMIN})
     return await build_metrics_snapshot_data(request.app.state.redis_backend, redis_client)
 
 

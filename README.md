@@ -4,6 +4,7 @@ FastAPI OTP service with:
 
 - OTP request and verification endpoints
 - Redis-backed OTP state
+- Admin accounts are also stored in Redis. The env credentials seed the `Super Admin` account on startup, and staff users can be created from the admin UI.
 - SMS provider integrations
 - Operations monitor for OTP traffic and provider health
 
@@ -26,7 +27,6 @@ Required production environment variables:
 
 - `ADMIN_DASHBOARD_USERNAME`
 - `ADMIN_DASHBOARD_PASSWORD`
-- `ADMIN_SESSION_SECRET`
 
 Recommended related variables:
 
@@ -67,6 +67,7 @@ Frontend source lives in `frontend/` and builds into `static/`.
 - Set `USE_FAKE_REDIS=false`
 - Set a real `REDIS_URL`
 - Customer records and dashboard metrics are both stored in Redis, so they survive deploys as long as the Redis service remains attached.
+- Super Admin and staff user accounts also live in Redis, so they survive deploys as long as the Redis service remains attached.
 - Turn on `GOOGLE_SHEETS_BACKUP_ENABLED=true` and provide `GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID` plus a Google service account to keep a second copy in Google Sheets.
 - The app also writes a local snapshot export to `data/backups/latest-backup.json` on each backup cycle.
 - Rotate SMS credentials if they were ever exposed
@@ -87,7 +88,6 @@ Recommended setup:
 4. Set these secret values when Render prompts for them:
    - `ADMIN_DASHBOARD_USERNAME`
    - `ADMIN_DASHBOARD_PASSWORD`
-   - `ADMIN_SESSION_SECRET`
    - `PLASGATE_SECRET_KEY`
    - `PLASGATE_PRIVATE_KEY`
    - `PLASGATE_SENDER` if your Plasgate sender is different from `PlasGateUAT`

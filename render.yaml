@@ -46,8 +46,6 @@ services:
         value: "28800"
       - key: ADMIN_SESSION_COOKIE_SECURE
         value: "true"
-      - key: ADMIN_SESSION_SECRET
-        sync: false
       - key: REQUEST_OTP_RATE_LIMIT
         value: "1/minute"
       - key: VERIFY_OTP_RATE_LIMIT

@@ -17,6 +17,7 @@ const translationsEn = {
   "nav_dashboard": "Dashboard",
   "nav_verify_phone": "Verify Phone",
   "nav_customers": "Customers",
+  "nav_users": "Users",
   "btn_refresh": "Refresh Data",
   "btn_logout": "Logout",
   "dashboard_title": "Dashboard",
@@ -78,11 +79,27 @@ const translationsEn = {
   "customers_deleted": "Customer record deleted.",
   "customer_form_invalid": "Please fill Customer ID, Name, and Phone Number.",
   "customer_editing": "Editing customer record.",
+  "customers_read_only": "View-only access.",
   "file_invalid": "Unsupported file. Please use .xlsx, .xls, or .csv.",
   "save_failed": "Unable to save customer records.",
   "load_metrics_failed": "Unable to load metrics.",
   "request_failed": "Unable to request OTP.",
   "delete_confirm": "Delete customer {id}?",
+  "role_super_admin": "Super Admin",
+  "role_staff": "Staff",
+  "users_title": "User Management",
+  "users_copy": "Create staff users who can verify phones and view customer records.",
+  "label_new_staff_username": "New staff username",
+  "label_new_staff_password": "New staff password",
+  "label_role": "Role",
+  "label_created_at": "Created At",
+  "btn_create_staff": "Create Staff",
+  "staff_user_created": "Staff user created successfully.",
+  "staff_user_exists": "A user with this username already exists.",
+  "staff_user_invalid": "Please enter a username and password.",
+  "users_loaded": "Staff users loaded.",
+  "users_empty": "No staff users yet.",
+  "section_kicker_users": "Users",
   "provider_unknown": "Unknown provider status",
   "loading_workspace": "Loading workspace...",
   "template_tagline_1": "Cloud-ready OTP support",
@@ -365,6 +382,11 @@ const sectionConfig = {
     titleKey: "customers_title",
     descKey: "customers_copy",
     kickerKey: "section_kicker_customers"
+  },
+  users: {
+    titleKey: "users_title",
+    descKey: "users_copy",
+    kickerKey: "section_kicker_users"
   }
 };
 
@@ -398,7 +420,13 @@ createApp({
       activeSection: "verify-phone",
       metrics: null,
       customers: [],
+      adminUsers: [],
       editingCustomerId: null,
+      session: {
+        username: "",
+        role: "",
+        permissions: {}
+      },
       verifyStepReady: false,
       verifyCountdownRemaining: 0,
       searchQuery: "",
@@ -412,6 +440,10 @@ createApp({
         phone_number: "",
         otp: ""
       },
+      userForm: {
+        username: "",
+        password: ""
+      },
       verifyPopup: {
         open: false,
         mode: "loading",
@@ -420,7 +452,8 @@ createApp({
       status: {
         login: { message: "", messageKey: "", messageParams: {}, type: "error" },
         verify: { message: "", messageKey: "", messageParams: {}, type: "success" },
-        customers: { message: "", messageKey: "", messageParams: {}, type: "success" }
+        customers: { message: "", messageKey: "", messageParams: {}, type: "success" },
+        users: { message: "", messageKey: "", messageParams: {}, type: "success" }
       }
     });
 
@@ -458,6 +491,18 @@ createApp({
       );
     });
     const verifyCountdownText = computed(() => state.verifyStepReady ? formatDuration(state.verifyCountdownRemaining) : "-");
+    const canViewDashboard = computed(() => state.session.role === "super_admin");
+    const canManageUsers = computed(() => state.session.role === "super_admin");
+    const canEditCustomers = computed(() => state.session.role === "super_admin");
+    const currentRoleLabel = computed(() => {
+      if (state.session.role === "super_admin") {
+        return text.value.role_super_admin;
+      }
+      if (state.session.role === "staff") {
+        return text.value.role_staff;
+      }
+      return "";
+    });
 
     function applyUiState() {
       document.documentElement.lang = currentLang.value;
@@ -621,8 +666,22 @@ createApp({
       return status.message || "";
     }
 
+    function getDefaultSectionForRole(role) {
+      return role === "super_admin" ? "dashboard" : "verify-phone";
+    }
+
+    function isSectionAllowed(sectionName) {
+      if (sectionName === "dashboard" || sectionName === "users") {
+        return canViewDashboard.value;
+      }
+      return Boolean(state.session.role);
+    }
+
     function setActiveSection(sectionName, syncHash = true) {
-      const nextSection = sectionConfig[sectionName] ? sectionName : "verify-phone";
+      const fallbackSection = getDefaultSectionForRole(state.session.role);
+      const nextSection = sectionConfig[sectionName] && isSectionAllowed(sectionName)
+        ? sectionName
+        : fallbackSection;
       state.activeSection = nextSection;
       if (syncHash) {
         window.location.hash = nextSection === "verify-phone" ? "" : nextSection;
@@ -630,7 +689,7 @@ createApp({
     }
 
     function syncSectionFromHash() {
-      setActiveSection(window.location.hash.replace("#", "") || "verify-phone", false);
+      setActiveSection(window.location.hash.replace("#", "") || getDefaultSectionForRole(state.session.role), false);
     }
 
     function stopCountdown() {
@@ -709,17 +768,44 @@ createApp({
       }
     }
 
-    async function refreshData() {
-      const response = await fetch("/admin/metrics");
+    async function loadAdminUsers(showLoadedStatus = false) {
+      if (!canManageUsers.value) {
+        state.adminUsers = [];
+        return;
+      }
+
+      const response = await fetch("/admin/users");
       const data = await parseResponse(response);
       if (!response.ok) {
-        throw new Error(getFetchErrorMessage(data, text.value.load_metrics_failed));
+        throw new Error(getFetchErrorMessage(data, text.value.save_failed));
       }
-      state.metrics = data;
+      state.adminUsers = Array.isArray(data.users) ? data.users : [];
+      if (showLoadedStatus) {
+        setLocalizedStatus("users", "users_loaded", "success");
+      }
+    }
+
+    async function refreshData() {
+      if (canViewDashboard.value) {
+        const response = await fetch("/admin/metrics");
+        const data = await parseResponse(response);
+        if (!response.ok) {
+          throw new Error(getFetchErrorMessage(data, text.value.load_metrics_failed));
+        }
+        state.metrics = data;
+      } else {
+        state.metrics = null;
+      }
+      await loadCustomers();
+      if (canManageUsers.value) {
+        await loadAdminUsers();
+      } else {
+        state.adminUsers = [];
+      }
     }
 
     async function loadAdminData() {
-      await Promise.all([refreshData(), loadCustomers()]);
+      await refreshData();
     }
 
     function startRefreshTimer() {
@@ -752,10 +838,15 @@ createApp({
         }
         state.authenticated = Boolean(data.authenticated);
         state.authResolved = true;
+        state.session.username = data.username || "";
+        state.session.role = data.role || "";
+        state.session.permissions = data.permissions || {};
         if (state.authenticated) {
           syncSectionFromHash();
           await loadAdminData();
-          startRefreshTimer();
+          if (canViewDashboard.value) {
+            startRefreshTimer();
+          }
         }
       } catch (error) {
         if (requestSequence !== authCheckSequence) {
@@ -763,6 +854,13 @@ createApp({
         }
         state.authResolved = true;
         state.authenticated = false;
+        state.session.username = "";
+        state.session.role = "";
+        state.session.permissions = {};
+        state.customers = [];
+        state.adminUsers = [];
+        state.userForm.username = "";
+        state.userForm.password = "";
       }
     }
 
@@ -795,6 +893,14 @@ createApp({
       await fetch("/admin/logout", { method: "POST" });
       state.authenticated = false;
       state.authResolved = true;
+      state.session.username = "";
+      state.session.role = "";
+      state.session.permissions = {};
+      state.customers = [];
+      state.adminUsers = [];
+      state.userForm.username = "";
+      state.userForm.password = "";
+      state.metrics = null;
       stopRefreshTimer();
       resetVerifyForm();
     }
@@ -830,7 +936,7 @@ createApp({
     }
 
     function editCustomer(customer) {
-      if (!customer) {
+      if (!customer || !canEditCustomers.value) {
         return;
       }
       fillVerifyCustomerForm(customer);
@@ -847,7 +953,7 @@ createApp({
 
     async function updateCustomerRecord() {
       clearStatus("verify");
-      if (!state.editingCustomerId) {
+      if (!state.editingCustomerId || !canEditCustomers.value) {
         return;
       }
 
@@ -874,7 +980,7 @@ createApp({
         state.verifyStepReady = false;
         state.verifyForm.otp = "";
         stopCountdown();
-        await Promise.all([refreshData(), loadCustomers()]);
+        await refreshData();
         setActiveSection("customers");
         window.scrollTo({ top: 0, behavior: "smooth" });
       } catch (error) {
@@ -886,7 +992,7 @@ createApp({
     }
 
     async function deleteCustomer(customer) {
-      if (!customer) {
+      if (!customer || !canEditCustomers.value) {
         return;
       }
 
@@ -974,7 +1080,7 @@ createApp({
           await nextTick();
           try {
             await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
-            await Promise.all([refreshData(), loadCustomers()]);
+            await refreshData();
             setActiveSection("customers");
             window.scrollTo({ top: 0, behavior: "smooth" });
           } catch (error) {
@@ -993,10 +1099,17 @@ createApp({
     }
 
     function triggerCustomerImport() {
+      if (!canEditCustomers.value) {
+        return;
+      }
       customerFileInput.value?.click();
     }
 
     async function importCustomerFile(event) {
+      if (!canEditCustomers.value) {
+        return;
+      }
+
       const file = event.target.files?.[0];
       if (!file) {
         return;
@@ -1029,6 +1142,10 @@ createApp({
     }
 
     function exportCustomers(format) {
+      if (!canEditCustomers.value) {
+        return;
+      }
+
       const rows = state.customers.map((customer) => ({
         ID: customer.id,
         Name: customer.name,
@@ -1056,10 +1173,52 @@ createApp({
     }
 
     function downloadTemplate() {
+      if (!canEditCustomers.value) {
+        return;
+      }
+
       const worksheet = XLSX.utils.aoa_to_sheet([["ID", "Name", "PhoneNumber", "OTP", "Timestamp"]]);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
       XLSX.writeFile(workbook, "customer-import-template.xlsx", { bookType: "xlsx" });
+    }
+
+    async function createStaffUser() {
+      clearStatus("users");
+      if (!canManageUsers.value) {
+        return;
+      }
+
+      const username = state.userForm.username.trim();
+      const password = state.userForm.password.trim();
+      if (!username || !password) {
+        setLocalizedStatus("users", "staff_user_invalid", "error");
+        return;
+      }
+
+      try {
+        const response = await fetch("/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await parseResponse(response);
+        if (!response.ok) {
+          if (response.status === 409) {
+            setLocalizedStatus("users", "staff_user_exists", "error");
+            return;
+          }
+          setStatus("users", getFetchErrorMessage(data, text.value.save_failed), "error");
+          return;
+        }
+
+        state.userForm.username = "";
+        state.userForm.password = "";
+        setLocalizedStatus("users", "staff_user_created", "success");
+        await loadAdminUsers();
+      } catch (error) {
+        setStatus("users", error?.message || text.value.save_failed, "error");
+      }
     }
 
     onMounted(() => {
@@ -1088,6 +1247,10 @@ createApp({
       systemStatusText,
       filteredCustomers,
       verifyCountdownText,
+      canViewDashboard,
+      canManageUsers,
+      canEditCustomers,
+      currentRoleLabel,
       setActiveSection,
       handleLogin,
       handleLogout,
@@ -1099,6 +1262,7 @@ createApp({
       importCustomerFile,
       exportCustomers,
       downloadTemplate,
+      createStaffUser,
       saveVerifyCustomerRecord,
       editCustomer,
       deleteCustomer,
@@ -1199,9 +1363,10 @@ createApp({
             <div class="sidebar-group">
               <h3>{{ text.nav_workspace }}</h3>
               <div class="nav-list">
-                <button class="nav-button" :class="{ active: state.activeSection === 'dashboard' }" @click="setActiveSection('dashboard')">{{ text.nav_dashboard }}</button>
+                <button v-if="canViewDashboard" class="nav-button" :class="{ active: state.activeSection === 'dashboard' }" @click="setActiveSection('dashboard')">{{ text.nav_dashboard }}</button>
                 <button class="nav-button" :class="{ active: state.activeSection === 'verify-phone' }" @click="setActiveSection('verify-phone')">{{ text.nav_verify_phone }}</button>
                 <button class="nav-button" :class="{ active: state.activeSection === 'customers' }" @click="setActiveSection('customers')">{{ text.nav_customers }}</button>
+                <button v-if="canManageUsers" class="nav-button" :class="{ active: state.activeSection === 'users' }" @click="setActiveSection('users')">{{ text.nav_users }}</button>
               </div>
             </div>
 
@@ -1218,10 +1383,13 @@ createApp({
                 <h2>{{ text[currentSectionMeta.titleKey] }}</h2>
                 <p>{{ text[currentSectionMeta.descKey] }}</p>
               </div>
-              <div class="status-chip">{{ systemStatusText }}</div>
+              <div class="topbar-status">
+                <div v-if="currentRoleLabel" class="status-chip role-chip">{{ currentRoleLabel }}</div>
+                <div class="status-chip">{{ systemStatusText }}</div>
+              </div>
             </header>
 
-            <section v-show="state.activeSection === 'dashboard'" class="panel-grid">
+            <section v-if="canViewDashboard && state.activeSection === 'dashboard'" class="panel-grid">
               <div class="stats-grid">
                 <div v-for="card in summaryCards" :key="card.label" class="metric-card">
                   <div class="metric-label">{{ card.label }}</div>
@@ -1311,9 +1479,9 @@ createApp({
                           type="button"
                           class="button"
                           :disabled="state.verifyBusy"
-                          @click="state.editingCustomerId ? updateCustomerRecord() : requestStaffOtp()"
+                          @click="canEditCustomers && state.editingCustomerId ? updateCustomerRecord() : requestStaffOtp()"
                         >
-                          {{ state.editingCustomerId ? text.btn_update_customer : text.btn_send_otp }}
+                          {{ canEditCustomers && state.editingCustomerId ? text.btn_update_customer : text.btn_send_otp }}
                         </button>
                         <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="resetVerifyForm">{{ text.btn_reset }}</button>
                       </div>
@@ -1369,7 +1537,7 @@ createApp({
                 </div>
 
                 <div class="toolbar">
-                  <div class="button-row">
+                  <div v-if="canEditCustomers" class="button-row">
                     <button class="ghost-button" @click="downloadTemplate">{{ text.btn_download_template }}</button>
                     <button class="ghost-button" @click="triggerCustomerImport">{{ text.btn_import_excel }}</button>
                     <button class="ghost-button" @click="exportCustomers('xlsx')">{{ text.btn_export_excel }}</button>
@@ -1414,14 +1582,75 @@ createApp({
                         <td>{{ customer.otp || '' }}</td>
                         <td class="timestamp-cell">{{ formatCustomerTimestamp(customer.timestamp, currentLang) }}</td>
                         <td class="actions-cell">
-                          <div class="table-actions">
+                          <div v-if="canEditCustomers" class="table-actions">
                             <button type="button" class="table-button edit" @click="editCustomer(customer)">{{ text.btn_edit }}</button>
                             <button type="button" class="table-button delete" @click="deleteCustomer(customer)">{{ text.btn_delete }}</button>
                           </div>
+                          <span v-else class="muted-copy">{{ text.customers_read_only }}</span>
                         </td>
                       </tr>
                     </tbody>
                   </table>
+                </div>
+              </article>
+            </section>
+
+            <section v-if="canManageUsers && state.activeSection === 'users'" class="panel-grid">
+              <article class="glass card">
+                <div class="card-head">
+                  <div>
+                    <h3 class="card-title">{{ text.users_title }}</h3>
+                    <p class="card-copy">{{ text.users_copy }}</p>
+                  </div>
+                </div>
+
+                <div class="users-layout">
+                  <div class="users-panel">
+                    <div class="field">
+                      <label>{{ text.label_new_staff_username }}</label>
+                      <input v-model="state.userForm.username" type="text" autocomplete="username" placeholder="staff01">
+                    </div>
+                    <div class="field">
+                      <label>{{ text.label_new_staff_password }}</label>
+                      <input v-model="state.userForm.password" type="password" autocomplete="new-password" placeholder="ChangeMe123!">
+                    </div>
+                    <div class="button-row">
+                      <button type="button" class="button" @click="createStaffUser">{{ text.btn_create_staff }}</button>
+                    </div>
+                    <div v-if="getStatusMessage('users')" class="status-panel" :class="state.status.users.type">
+                      {{ getStatusMessage('users') }}
+                    </div>
+                  </div>
+
+                  <div class="users-panel">
+                    <div class="card-head compact">
+                      <div>
+                        <h3 class="card-title">{{ text.nav_users }}</h3>
+                        <p class="card-copy">{{ state.adminUsers.length ? text.users_loaded : text.users_empty }}</p>
+                      </div>
+                    </div>
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>{{ text.label_username }}</th>
+                            <th>{{ text.label_role }}</th>
+                            <th>{{ text.label_created_at }}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-if="!state.adminUsers.length">
+                            <td colspan="3" class="empty-state">{{ text.users_empty }}</td>
+                          </tr>
+                          <tr v-for="user in state.adminUsers" :key="user.username">
+                            <td>{{ user.username }}</td>
+                            <td>{{ user.role === 'super_admin' ? text.role_super_admin : text.role_staff }}</td>
+                            <td>{{ formatCustomerTimestamp(user.created_at, currentLang) }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               </article>
             </section>
