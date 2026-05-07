@@ -42,6 +42,7 @@ const translationsEn = {
   "sent_to": "Sent to",
   "verify_step_ready": "Verification step is ready.",
   "btn_send_otp": "Send OTP",
+  "btn_update_customer": "Update",
   "btn_verify_otp": "Verify OTP",
   "btn_reset": "Reset",
   "label_customer_id": "Customer ID",
@@ -69,6 +70,8 @@ const translationsEn = {
   "verify_phone_required": "Please enter a phone number before requesting OTP.",
   "verify_otp_required": "Please enter a 6-digit OTP.",
   "customers_saved": "Customer records saved.",
+  "customer_update_loading": "Updating customer...",
+  "customer_update_success": "Customer updated successfully.",
   "customers_loaded": "Customer records loaded.",
   "customers_imported": "Customer file imported successfully.",
   "customers_exported": "Customer file exported.",
@@ -153,6 +156,7 @@ const translationsTh = {
   "sent_to": "ส่งไปยัง",
   "verify_step_ready": "ขั้นตอนการยืนยันพร้อมแล้ว",
   "btn_send_otp": "ส่ง OTP",
+  "btn_update_customer": "อัปเดต",
   "btn_verify_otp": "ยืนยัน OTP",
   "btn_reset": "รีเซ็ต",
   "label_customer_id": "รหัสลูกค้า",
@@ -180,6 +184,8 @@ const translationsTh = {
   "verify_phone_required": "กรุณากรอกหมายเลขโทรศัพท์ก่อนขอ OTP",
   "verify_otp_required": "กรุณากรอก OTP 6 หลัก",
   "customers_saved": "บันทึกรายการลูกค้าแล้ว",
+  "customer_update_loading": "กำลังอัปเดตข้อมูลลูกค้า...",
+  "customer_update_success": "อัปเดตข้อมูลลูกค้าสำเร็จ",
   "customers_loaded": "โหลดรายการลูกค้าแล้ว",
   "customers_imported": "นำเข้าไฟล์ลูกค้าเรียบร้อยแล้ว",
   "customers_exported": "ส่งออกไฟล์ลูกค้าเรียบร้อยแล้ว",
@@ -264,6 +270,7 @@ const translationsKh = {
   "sent_to": "ផ្ញើទៅ",
   "verify_step_ready": "ជំហានផ្ទៀងផ្ទាត់បានត្រៀមរួច",
   "btn_send_otp": "ផ្ញើ OTP",
+  "btn_update_customer": "កែប្រែ",
   "btn_verify_otp": "ផ្ទៀងផ្ទាត់ OTP",
   "btn_reset": "កំណត់ឡើងវិញ",
   "label_customer_id": "លេខសម្គាល់អតិថិជន",
@@ -291,6 +298,8 @@ const translationsKh = {
   "verify_phone_required": "សូមបញ្ចូលលេខទូរស័ព្ទមុនស្នើ OTP",
   "verify_otp_required": "សូមបញ្ចូល OTP 6 ខ្ទង់",
   "customers_saved": "រក្សាទុកកំណត់ត្រាអតិថិជនរួចរាល់",
+  "customer_update_loading": "កំពុងធ្វើបច្ចុប្បន្នភាពអតិថិជន...",
+  "customer_update_success": "កែប្រែអតិថិជនបានជោគជ័យ",
   "customers_loaded": "បានផ្ទុកកំណត់ត្រាអតិថិជន",
   "customers_imported": "នាំចូលឯកសារអតិថិជនបានជោគជ័យ",
   "customers_exported": "នាំចេញឯកសារអតិថិជនរួចរាល់",
@@ -825,9 +834,55 @@ createApp({
         return;
       }
       fillVerifyCustomerForm(customer);
+      state.verifyStepReady = false;
+      state.verifyBusy = false;
+      state.verifyForm.otp = "";
+      stopCountdown();
+      clearStatus("verify");
+      hideVerifyPopup();
       setActiveSection("verify-phone");
       setLocalizedStatus("verify", "customer_editing", "success");
       window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    async function updateCustomerRecord() {
+      clearStatus("verify");
+      if (!state.editingCustomerId) {
+        return;
+      }
+
+      const hasCoreFields = state.verifyForm.id.trim() && state.verifyForm.name.trim() && state.verifyForm.phone_number.trim();
+      if (!hasCoreFields) {
+        setLocalizedStatus("verify", "customer_form_invalid", "error");
+        return;
+      }
+
+      state.verifyBusy = true;
+      showVerifyPopup("loading", text.value.customer_update_loading);
+
+      try {
+        const savedCustomer = await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: true });
+        if (!savedCustomer) {
+          hideVerifyPopup();
+          return;
+        }
+
+        setLocalizedStatus("verify", "customer_update_success", "success");
+        showVerifySuccessPopup(text.value.customer_update_success);
+        await nextTick();
+        state.editingCustomerId = null;
+        state.verifyStepReady = false;
+        state.verifyForm.otp = "";
+        stopCountdown();
+        await Promise.all([refreshData(), loadCustomers()]);
+        setActiveSection("customers");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (error) {
+        hideVerifyPopup();
+        setStatus("verify", error?.message || text.value.save_failed, "error");
+      } finally {
+        state.verifyBusy = false;
+      }
     }
 
     async function deleteCustomer(customer) {
@@ -1038,6 +1093,7 @@ createApp({
       handleLogout,
       requestStaffOtp,
       verifyStaffOtp,
+      updateCustomerRecord,
       resetVerifyForm,
       triggerCustomerImport,
       importCustomerFile,
@@ -1251,7 +1307,14 @@ createApp({
                       </div>
 
                       <div class="button-row workflow-actions">
-                        <button type="button" class="button" :disabled="state.verifyBusy" @click="requestStaffOtp">{{ text.btn_send_otp }}</button>
+                        <button
+                          type="button"
+                          class="button"
+                          :disabled="state.verifyBusy"
+                          @click="state.editingCustomerId ? updateCustomerRecord() : requestStaffOtp()"
+                        >
+                          {{ state.editingCustomerId ? text.btn_update_customer : text.btn_send_otp }}
+                        </button>
                         <button type="button" class="ghost-button" :disabled="state.verifyBusy" @click="resetVerifyForm">{{ text.btn_reset }}</button>
                       </div>
                   </section>
