@@ -116,6 +116,7 @@ ADMIN_DASHBOARD_USERNAME = os.getenv("ADMIN_DASHBOARD_USERNAME", "").strip()
 ADMIN_DASHBOARD_PASSWORD = os.getenv("ADMIN_DASHBOARD_PASSWORD", "").strip()
 ADMIN_DASHBOARD_REALM = os.getenv("ADMIN_DASHBOARD_REALM", "OTP Admin Monitor").strip() or "OTP Admin Monitor"
 ADMIN_DASHBOARD_AUTH_CONFIGURED = bool(ADMIN_DASHBOARD_USERNAME and ADMIN_DASHBOARD_PASSWORD)
+ADMIN_LOGIN_RATE_LIMIT = os.getenv("ADMIN_LOGIN_RATE_LIMIT", "10/minute").strip()
 ADMIN_ROLE_SUPER_ADMIN = "super_admin"
 ADMIN_ROLE_STAFF = "staff"
 ADMIN_SESSION_COOKIE_NAME = os.getenv("ADMIN_SESSION_COOKIE_NAME", "otp_admin_session").strip() or "otp_admin_session"
@@ -2167,7 +2168,8 @@ async def customers_redirect():
 
 
 @app.post("/admin/login", response_model=AdminLoginResponse)
-async def admin_login(login_request: AdminLoginRequest, redis_client: redis.Redis = Depends(get_redis)):
+@limiter.limit(ADMIN_LOGIN_RATE_LIMIT)
+async def admin_login(request: Request, login_request: AdminLoginRequest, redis_client: redis.Redis = Depends(get_redis)):
     if not ADMIN_DASHBOARD_ENABLED:
         raise HTTPException(status_code=404, detail="OTP admin monitor is disabled.")
 

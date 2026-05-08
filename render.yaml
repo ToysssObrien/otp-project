@@ -40,6 +40,8 @@ services:
         sync: false
       - key: ADMIN_DASHBOARD_REALM
         value: "OTP Admin Monitor"
+      - key: ADMIN_LOGIN_RATE_LIMIT
+        value: "10/minute"
       - key: ADMIN_SESSION_COOKIE_NAME
         value: "otp_admin_session"
       - key: ADMIN_SESSION_DURATION_SECONDS

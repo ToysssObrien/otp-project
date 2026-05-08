@@ -27,14 +27,18 @@ Required production environment variables:
 
 - `ADMIN_DASHBOARD_USERNAME`
 - `ADMIN_DASHBOARD_PASSWORD`
+- `ADMIN_LOGIN_RATE_LIMIT`
 
 Recommended related variables:
 
 - `ADMIN_DASHBOARD_REALM`
+- `ADMIN_LOGIN_RATE_LIMIT`
 - `ADMIN_SESSION_DURATION_SECONDS`
 - `ADMIN_SESSION_COOKIE_SECURE`
 - `REDIS_URL`
 - `OTP_PROVIDER`
+- Admin login is rate limited and uses HttpOnly session cookies backed by Redis
+- Keep secret values out of the repo and use Render secret env vars or local `.env` only
 
 ## Metrics Captured
 
