@@ -152,6 +152,23 @@ GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_FI
 GOOGLE_SHEETS_BACKUP_TIMEOUT_SECONDS = validate_positive_int("GOOGLE_SHEETS_BACKUP_TIMEOUT_SECONDS", 15)
 GOOGLE_SHEETS_BACKUP_INTERVAL_SECONDS = validate_positive_int("GOOGLE_SHEETS_BACKUP_INTERVAL_SECONDS", 300)
 GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
+APP_VERSION_FILE = Path(__file__).resolve().parent / "VERSION"
+
+
+def load_app_version() -> str:
+    env_version = os.getenv("APP_VERSION", "").strip()
+    if env_version:
+        return env_version
+    try:
+        file_version = APP_VERSION_FILE.read_text(encoding="utf-8").strip()
+        if file_version:
+            return file_version
+    except OSError:
+        pass
+    return "v0.0.1"
+
+
+APP_VERSION = load_app_version()
 
 if OTP_LENGTH != 6:
     raise RuntimeError("OTP_LENGTH must be 6 to match the current client validation.")
@@ -241,6 +258,7 @@ async def lifespan(app: FastAPI):
 
     print(
         "--- OTP CONFIG --- "
+        f"app_version={APP_VERSION}, "
         f"provider={OTP_PROVIDER}, "
         f"dev_mode={DEV_OTP_MODE}, "
         f"redis_backend={redis_backend}, "
@@ -302,6 +320,7 @@ async def disable_cache(request: Request, call_next):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    response.headers["X-App-Version"] = APP_VERSION
     return response
 
 
@@ -427,6 +446,7 @@ class StaffAssistedVerifyResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    app_version: str
     provider: str
     dev_mode: bool
     redis_backend: str
@@ -2385,6 +2405,7 @@ async def health(request: Request, redis_client: redis.Redis = Depends(get_redis
         safe_console_print(f"[health] redis unavailable: {trim_text(exc)}")
     return {
         "status": "ok",
+        "app_version": APP_VERSION,
         "provider": OTP_PROVIDER,
         "dev_mode": DEV_OTP_MODE,
         "redis_backend": request.app.state.redis_backend,

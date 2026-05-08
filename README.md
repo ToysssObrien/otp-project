@@ -8,6 +8,12 @@ FastAPI OTP service with:
 - SMS provider integrations
 - Operations monitor for OTP traffic and provider health
 
+## Versioning
+
+- Current app version is stored in [`VERSION`](/D:/OTP_project/VERSION)
+- The same version is returned by `GET /health` and sent in the `X-App-Version` response header
+- Bump the version file on each meaningful update, for example `v0.0.2`, `v0.0.3`, and so on
+
 ## Main Routes
 
 - `POST /request-otp`
