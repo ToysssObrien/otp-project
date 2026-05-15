@@ -1009,9 +1009,9 @@ createApp({
         showVerifySuccessPopup(text.value.customer_update_success);
         await nextTick();
         clearVerifyFormAfterSave();
-        await refreshData();
         setActiveSection("customers");
         window.scrollTo({ top: 0, behavior: "smooth" });
+        void refreshData().catch((error) => console.error(error));
       } catch (error) {
         hideVerifyPopup();
         setStatus("verify", error?.message || text.value.save_failed, "error");
@@ -1110,9 +1110,9 @@ createApp({
           try {
             await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
             clearVerifyFormAfterSave();
-            await refreshData();
             setActiveSection("customers");
             window.scrollTo({ top: 0, behavior: "smooth" });
+            void refreshData().catch((error) => console.error(error));
           } catch (error) {
             console.error(error);
           }
