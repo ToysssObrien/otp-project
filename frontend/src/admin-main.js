@@ -739,6 +739,19 @@ createApp({
       stopCountdown();
     }
 
+    function clearVerifyFormAfterSave() {
+      state.verifyForm.id = "";
+      state.verifyForm.name = "";
+      state.verifyForm.phone_number = "";
+      state.verifyForm.otp = "";
+      state.verifyStepReady = false;
+      state.verifyBusy = false;
+      state.editingCustomerId = null;
+      state.verifyCountdownRemaining = 0;
+      stopCountdown();
+      clearStatus("verify");
+    }
+
     function fillVerifyCustomerForm(customer) {
       state.verifyForm.id = customer.id || "";
       state.verifyForm.name = customer.name || "";
@@ -995,10 +1008,7 @@ createApp({
         setLocalizedStatus("verify", "customer_update_success", "success");
         showVerifySuccessPopup(text.value.customer_update_success);
         await nextTick();
-        state.editingCustomerId = null;
-        state.verifyStepReady = false;
-        state.verifyForm.otp = "";
-        stopCountdown();
+        clearVerifyFormAfterSave();
         await refreshData();
         setActiveSection("customers");
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1099,6 +1109,7 @@ createApp({
           await nextTick();
           try {
             await saveVerifyCustomerRecord({ showSuccess: false, requireComplete: false });
+            clearVerifyFormAfterSave();
             await refreshData();
             setActiveSection("customers");
             window.scrollTo({ top: 0, behavior: "smooth" });
