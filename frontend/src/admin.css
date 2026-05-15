@@ -754,6 +754,23 @@ textarea:focus,
   flex: 1 1 480px;
 }
 
+.toolbar-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex: 1 1 420px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-controls .control-group {
+  min-width: 180px;
+}
+
+.sort-select {
+  min-width: 180px;
+}
+
 .button,
 .ghost-button {
   min-height: 50px;
@@ -980,6 +997,7 @@ html[data-theme="dark"] .popup-message {
 
 .search-input {
   max-width: 320px;
+  flex: 1 1 320px;
 }
 
 .table-wrap {

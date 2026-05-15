@@ -62,6 +62,9 @@ const translationsEn = {
   "customer_table_title": "Customer Records",
   "customer_table_copy": "Imported or saved customer data will appear here.",
   "search_placeholder": "Search by ID, name, phone, or OTP",
+  "sort_label": "Sort by date",
+  "sort_newest": "Newest first",
+  "sort_oldest": "Oldest first",
   "table_empty": "No customer records yet.",
   "m_req": "Requests",
   "m_success": "Success",
@@ -441,6 +444,7 @@ createApp({
       verifyStepReady: false,
       verifyCountdownRemaining: 0,
       searchQuery: "",
+      customerSortOrder: localStorage.getItem("otp_customer_sort_order") || "desc",
       loginForm: {
         username: "",
         password: ""
@@ -497,13 +501,20 @@ createApp({
     });
     const filteredCustomers = computed(() => {
       const query = state.searchQuery.trim().toLowerCase();
-      if (!query) {
-        return state.customers;
-      }
-      return state.customers.filter((customer) =>
-        [customer.id, customer.name, customer.phone_number, customer.otp]
+      const source = state.customers.filter((customer) =>
+        !query || [customer.id, customer.name, customer.phone_number, customer.otp]
           .some((value) => String(value || "").toLowerCase().includes(query))
       );
+      return source.slice().sort((left, right) => {
+        const leftValue = getCustomerTimestampValue(left);
+        const rightValue = getCustomerTimestampValue(right);
+        if (leftValue === rightValue) {
+          return String(left.id || "").localeCompare(String(right.id || ""));
+        }
+        return state.customerSortOrder === "asc"
+          ? leftValue - rightValue
+          : rightValue - leftValue;
+      });
     });
     const verifyCountdownText = computed(() => state.verifyStepReady ? formatDuration(state.verifyCountdownRemaining) : "-");
     const canViewDashboard = computed(() => state.session.role === "super_admin");
@@ -534,6 +545,10 @@ createApp({
       applyUiState();
     }, { immediate: true });
 
+    watch(() => state.customerSortOrder, (sortOrder) => {
+      localStorage.setItem("otp_customer_sort_order", sortOrder);
+    }, { immediate: true });
+
     function setStatus(scope, message, type = "success") {
       state.status[scope] = { message, messageKey: "", messageParams: {}, type };
     }
@@ -555,6 +570,11 @@ createApp({
 
     function currentIsoTimestamp() {
       return new Date().toISOString();
+    }
+
+    function getCustomerTimestampValue(customer) {
+      const value = customer?.timestamp ? new Date(customer.timestamp).getTime() : 0;
+      return Number.isFinite(value) ? value : 0;
     }
 
     function formatCustomerTimestamp(timestamp, lang = "en") {
@@ -1655,7 +1675,16 @@ createApp({
                     <button class="ghost-button" @click="exportCustomers('xlsx')">{{ text.btn_export_excel }}</button>
                     <button class="ghost-button" @click="exportCustomers('csv')">{{ text.btn_export_csv }}</button>
                   </div>
-                  <input v-model="state.searchQuery" class="search-input" type="text" :placeholder="text.search_placeholder">
+                  <div class="toolbar-controls">
+                    <div class="control-group compact">
+                      <label class="control-label">{{ text.sort_label }}</label>
+                      <select v-model="state.customerSortOrder" class="control-select sort-select">
+                        <option value="desc">{{ text.sort_newest }}</option>
+                        <option value="asc">{{ text.sort_oldest }}</option>
+                      </select>
+                    </div>
+                    <input v-model="state.searchQuery" class="search-input" type="text" :placeholder="text.search_placeholder">
+                  </div>
                 </div>
 
                 <input ref="customerFileInput" class="hidden" type="file" accept=".xlsx,.xls,.csv" @change="importCustomerFile">
