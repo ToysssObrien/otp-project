@@ -33,7 +33,7 @@ FastAPI OTP service with:
 - `GET /ops.html`
 - `GET /admin/metrics`
 
-For a fuller integration guide, see [INTEGRATION_GUIDE_TH.md](/D:/OTP_project/INTEGRATION_GUIDE_TH.md) or [API.md](/D:/OTP_project/API.md).
+For iCloud Leasing integration, see [INTEGRATION_GUIDE_TH.md](/D:/OTP_project/INTEGRATION_GUIDE_TH.md) or [API.md](/D:/OTP_project/API.md).
 
 ## External API
 
