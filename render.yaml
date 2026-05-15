@@ -48,6 +48,12 @@ services:
         value: "28800"
       - key: ADMIN_SESSION_COOKIE_SECURE
         value: "true"
+      - key: EXTERNAL_API_KEYS
+        sync: false
+      - key: EXTERNAL_API_HEADER_NAME
+        value: "X-API-Key"
+      - key: EXTERNAL_API_RATE_LIMIT
+        value: "60/minute"
       - key: REQUEST_OTP_RATE_LIMIT
         value: "1/minute"
       - key: VERIFY_OTP_RATE_LIMIT

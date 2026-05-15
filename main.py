@@ -125,6 +125,13 @@ ADMIN_SESSION_COOKIE_SECURE = env_flag("ADMIN_SESSION_COOKIE_SECURE", not DEV_OT
 REDIS_MAX_CONNECTIONS = validate_positive_int("REDIS_MAX_CONNECTIONS", 10)
 REDIS_STARTUP_RETRIES = validate_positive_int("REDIS_STARTUP_RETRIES", 5)
 REDIS_STARTUP_RETRY_DELAY_SECONDS = validate_positive_int("REDIS_STARTUP_RETRY_DELAY_SECONDS", 2)
+EXTERNAL_API_HEADER_NAME = os.getenv("EXTERNAL_API_HEADER_NAME", "X-API-Key").strip() or "X-API-Key"
+EXTERNAL_API_KEYS = [
+    key.strip()
+    for key in os.getenv("EXTERNAL_API_KEYS", "").split(",")
+    if key.strip()
+]
+EXTERNAL_API_RATE_LIMIT = os.getenv("EXTERNAL_API_RATE_LIMIT", "60/minute").strip()
 REQUEST_OTP_RATE_LIMIT = os.getenv(
     "REQUEST_OTP_RATE_LIMIT",
     "30/minute" if DEV_OTP_MODE else "1/minute",
@@ -294,7 +301,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OTP Service API",
     description="A simple API to request and verify One-Time Passwords (OTPs).",
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
 )
 app.state.limiter = limiter
@@ -326,7 +333,10 @@ async def disable_cache(request: Request, call_next):
 
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     redis_client = getattr(request.app.state, "redis", None)
-    if redis_client is not None and request.url.path in {"/request-otp", "/verify-otp", "/api/request-otp", "/api/verify-otp"}:
+    if redis_client is not None and (
+        request.url.path in {"/request-otp", "/verify-otp", "/api/request-otp", "/api/verify-otp"}
+        or request.url.path.startswith("/api/v1/")
+    ):
         await increment_summary_fields(
             redis_client,
             {
@@ -471,6 +481,44 @@ class CustomerRecordsResponse(BaseModel):
     customers: list[CustomerRecord]
 
 
+class ApiStatusResponse(BaseModel):
+    status: str
+    api_version: str
+    app_version: str
+    provider: str
+    dev_mode: bool
+    external_api_enabled: bool
+    redis_backend: str
+    redis_status: str = "ok"
+
+
+class ApiCustomerUpsertRequest(BaseModel):
+    id: str = Field(..., min_length=1, examples=["CUS-001"])
+    name: str = Field(..., min_length=1, examples=["Sokha Chan"])
+    phone_number: str = Field(..., min_length=1, examples=["0971234567"])
+    otp: str = Field(default="", examples=["123456"])
+    timestamp: str = Field(default="", examples=["2026-05-06T09:18:47Z"])
+
+
+class ApiCustomerRecordResponse(BaseModel):
+    customer: CustomerRecord
+
+
+class ApiCustomersListResponse(BaseModel):
+    customers: list[CustomerRecord]
+
+
+class ApiOtpRequest(BaseModel):
+    phone: str = Field(..., description="Customer phone number in local format.", examples=["0812345678"])
+    lang: str = Field(default="en", description="Language preference (en, kh, th).", examples=["en"])
+
+
+class ApiOtpVerify(BaseModel):
+    phone: str = Field(..., description="Customer phone number in local format.", examples=["0812345678"])
+    otp: str = Field(..., description="The 6-digit OTP received by the customer.", examples=["123456"])
+    lang: str = Field(default="en", description="Language preference (en, kh, th).", examples=["en"])
+
+
 # --- Helper Functions ---
 async def get_redis(request: Request) -> redis.Redis:
     return request.app.state.redis
@@ -503,6 +551,25 @@ def build_admin_storage_unavailable_response() -> JSONResponse:
     return JSONResponse(
         status_code=503,
         content={"detail": "OTP admin monitor storage is temporarily unavailable."},
+    )
+
+
+def is_external_api_configured() -> bool:
+    return bool(EXTERNAL_API_KEYS)
+
+
+def build_external_api_unavailable_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "External API is not configured. Set EXTERNAL_API_KEYS to enable it."},
+    )
+
+
+def build_external_api_auth_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "A valid API key is required."},
+        headers={"WWW-Authenticate": f'ApiKey header="{EXTERNAL_API_HEADER_NAME}"'},
     )
 
 
@@ -808,6 +875,21 @@ async def require_admin_role(
     return identity
 
 
+async def require_external_api_key(request: Request) -> str:
+    if not is_external_api_configured():
+        raise HTTPException(status_code=503, detail="External API is not configured.")
+
+    provided_key = request.headers.get(EXTERNAL_API_HEADER_NAME, "").strip()
+    if not provided_key:
+        raise HTTPException(status_code=401, detail="A valid API key is required.")
+
+    for configured_key in EXTERNAL_API_KEYS:
+        if secrets.compare_digest(provided_key, configured_key):
+            return configured_key
+
+    raise HTTPException(status_code=401, detail="Invalid API key.")
+
+
 def default_admin_next_path(role: str) -> str:
     return "/ops.html#dashboard" if role == ADMIN_ROLE_SUPER_ADMIN else "/ops.html#verify-phone"
 
@@ -836,6 +918,32 @@ def normalize_customer_record(record: CustomerRecord) -> dict[str, str]:
         "otp": record.otp.strip(),
         "timestamp": record.timestamp.strip() or utc_now_iso(),
     }
+
+
+def normalize_api_customer_request(payload: ApiCustomerUpsertRequest) -> CustomerRecord:
+    return CustomerRecord(
+        id=payload.id.strip(),
+        name=payload.name.strip(),
+        phone_number=payload.phone_number.strip(),
+        otp=payload.otp.strip(),
+        timestamp=payload.timestamp.strip() or utc_now_iso(),
+    )
+
+
+async def upsert_customer_record(redis_client: redis.Redis, payload: ApiCustomerUpsertRequest) -> list[dict[str, str]]:
+    customer = normalize_api_customer_request(payload)
+    current_records = await load_customer_records(redis_client)
+    normalized_customer = normalize_customer_record(customer)
+
+    current_records = [
+        record
+        for record in current_records
+        if str(record.get("id", "")).strip().lower() != normalized_customer["id"].lower()
+    ]
+    current_records.insert(0, normalized_customer)
+
+    saved_records = await save_customer_records(redis_client, [CustomerRecord.model_validate(record) for record in current_records])
+    return saved_records
 
 
 def is_google_sheets_backup_ready() -> bool:
@@ -2420,6 +2528,146 @@ async def admin_metrics(request: Request, redis_client: redis.Redis = Depends(ge
     await redis_client.ping()
     await require_admin_role(request, redis_client, {ADMIN_ROLE_SUPER_ADMIN})
     return await build_metrics_snapshot_data(request.app.state.redis_backend, redis_client)
+
+
+@app.get("/api/v1/status", response_model=ApiStatusResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_status(request: Request, redis_client: redis.Redis = Depends(get_redis)):
+    await require_external_api_key(request)
+    redis_status = "ok"
+    try:
+        await redis_client.ping()
+    except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError, OSError):
+        redis_status = "degraded"
+    return {
+        "status": "ok",
+        "api_version": "v1",
+        "app_version": APP_VERSION,
+        "provider": OTP_PROVIDER,
+        "dev_mode": DEV_OTP_MODE,
+        "external_api_enabled": True,
+        "redis_backend": request.app.state.redis_backend,
+        "redis_status": redis_status,
+    }
+
+
+@app.get("/api/v1/customers", response_model=ApiCustomersListResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_customers_list(request: Request, redis_client: redis.Redis = Depends(get_redis)):
+    await require_external_api_key(request)
+    return {"customers": await load_customer_records(redis_client)}
+
+
+@app.get("/api/v1/customers/{customer_id}", response_model=ApiCustomerRecordResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_customer_get(customer_id: str, request: Request, redis_client: redis.Redis = Depends(get_redis)):
+    await require_external_api_key(request)
+    target_id = customer_id.strip().lower()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required.")
+
+    customers = await load_customer_records(redis_client)
+    customer = next((record for record in customers if str(record.get("id", "")).strip().lower() == target_id), None)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found.")
+
+    return {"customer": CustomerRecord.model_validate(customer)}
+
+
+@app.post("/api/v1/customers", response_model=ApiCustomerRecordResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_customer_create(
+    request: Request,
+    payload: ApiCustomerUpsertRequest,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_external_api_key(request)
+    customer = normalize_api_customer_request(payload)
+    saved_customers = await upsert_customer_record(redis_client, payload)
+    try:
+        await sync_backup_artifacts(redis_client, request.app.state.redis_backend, customers=saved_customers)
+    except Exception as exc:
+        safe_console_print(f"[backup] {trim_text(exc)}")
+    return {"customer": customer}
+
+
+@app.put("/api/v1/customers/{customer_id}", response_model=ApiCustomerRecordResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_customer_update(
+    customer_id: str,
+    request: Request,
+    payload: ApiCustomerUpsertRequest,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_external_api_key(request)
+    if customer_id.strip().lower() != payload.id.strip().lower():
+        raise HTTPException(status_code=400, detail="Customer ID in the path must match the request body.")
+    customer = normalize_api_customer_request(payload)
+    saved_customers = await upsert_customer_record(redis_client, payload)
+    try:
+        await sync_backup_artifacts(redis_client, request.app.state.redis_backend, customers=saved_customers)
+    except Exception as exc:
+        safe_console_print(f"[backup] {trim_text(exc)}")
+    return {"customer": customer}
+
+
+@app.delete("/api/v1/customers/{customer_id}", response_model=SuccessResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_customer_delete(
+    customer_id: str,
+    request: Request,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_external_api_key(request)
+    target_id = customer_id.strip().lower()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required.")
+
+    customers = await load_customer_records(redis_client)
+    remaining_customers = [
+        record
+        for record in customers
+        if str(record.get("id", "")).strip().lower() != target_id
+    ]
+    if len(remaining_customers) == len(customers):
+        raise HTTPException(status_code=404, detail="Customer not found.")
+
+    saved_customers = await save_customer_records(redis_client, [CustomerRecord.model_validate(record) for record in remaining_customers])
+    try:
+        await sync_backup_artifacts(redis_client, request.app.state.redis_backend, customers=saved_customers)
+    except Exception as exc:
+        safe_console_print(f"[backup] {trim_text(exc)}")
+    return {"message": "Customer deleted successfully."}
+
+
+@app.post("/api/v1/otp/request", response_model=StaffAssistedRequestResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_request_otp(
+    request: Request,
+    otp_request: ApiOtpRequest,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_external_api_key(request)
+    phone_number = normalize_phone_number(otp_request.phone)
+    session_payload = await create_otp_session(phone_number, redis_client, include_ref_code=False, lang=otp_request.lang)
+    return {
+        "status": "success",
+        "expires_in": int(session_payload["expires_in"]),
+    }
+
+
+@app.post("/api/v1/otp/verify", response_model=StaffAssistedVerifyResponse)
+@limiter.limit(EXTERNAL_API_RATE_LIMIT)
+async def api_v1_verify_otp(
+    request: Request,
+    otp_verify: ApiOtpVerify,
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    await require_external_api_key(request)
+    phone_number = normalize_phone_number(otp_verify.phone)
+    provided_otp = validate_otp_format(otp_verify.otp)
+    message = await verify_otp_session(phone_number, provided_otp, redis_client, lang=otp_verify.lang)
+    return {"status": "success", "message": message}
 
 
 @app.post("/api/request-otp", response_model=StaffAssistedRequestResponse)

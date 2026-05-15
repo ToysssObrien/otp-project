@@ -5,6 +5,7 @@ FastAPI OTP service with:
 - OTP request and verification endpoints
 - Redis-backed OTP state
 - Admin accounts are also stored in Redis. The env credentials seed the `Super Admin` account on startup, and staff users can be created from the admin UI.
+- Versioned external API endpoints for future system-to-system integration
 - SMS provider integrations
 - Operations monitor for OTP traffic and provider health
 
@@ -18,11 +19,39 @@ FastAPI OTP service with:
 
 - `POST /request-otp`
 - `POST /verify-otp`
+- `GET /api/v1/status`
+- `POST /api/v1/otp/request`
+- `POST /api/v1/otp/verify`
+- `GET /api/v1/customers`
+- `GET /api/v1/customers/{customer_id}`
+- `POST /api/v1/customers`
+- `PUT /api/v1/customers/{customer_id}`
+- `DELETE /api/v1/customers/{customer_id}`
 - `GET /health`
 - `POST /admin/login`
 - `POST /admin/logout`
 - `GET /ops.html`
 - `GET /admin/metrics`
+
+## External API
+
+The versioned API is protected with an API key so other internal systems can integrate safely.
+
+Required environment variables:
+
+- `EXTERNAL_API_KEYS`
+
+Recommended related variables:
+
+- `EXTERNAL_API_HEADER_NAME` defaults to `X-API-Key`
+- `EXTERNAL_API_RATE_LIMIT`
+
+Notes:
+
+- Set `EXTERNAL_API_KEYS` to one or more comma-separated secrets.
+- Send the key in the request header named by `EXTERNAL_API_HEADER_NAME`.
+- The API currently covers status, OTP request/verify, and customer record read/write operations.
+- Existing admin/session flows still work as before and are separate from the integration API.
 
 ## Admin Monitor Security
 
@@ -78,6 +107,7 @@ Frontend source lives in `frontend/` and builds into `static/`.
 - Set a real `REDIS_URL`
 - Customer records and dashboard metrics are both stored in Redis, so they survive deploys as long as the Redis service remains attached.
 - Super Admin and staff user accounts also live in Redis, so they survive deploys as long as the Redis service remains attached.
+- If you want other systems to call this app directly, set `EXTERNAL_API_KEYS` and use the `/api/v1/...` routes.
 - Turn on `GOOGLE_SHEETS_BACKUP_ENABLED=true` and provide `GOOGLE_SHEETS_BACKUP_SPREADSHEET_ID` plus a Google service account to keep a second copy in Google Sheets.
 - The app also writes a local snapshot export to `data/backups/latest-backup.json` on each backup cycle.
 - Rotate SMS credentials if they were ever exposed
