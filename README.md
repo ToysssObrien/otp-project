@@ -33,6 +33,8 @@ FastAPI OTP service with:
 - `GET /ops.html`
 - `GET /admin/metrics`
 
+For a fuller integration guide, see [API.md](/D:/OTP_project/API.md).
+
 ## External API
 
 The versioned API is protected with an API key so other internal systems can integrate safely.
