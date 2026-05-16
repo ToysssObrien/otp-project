@@ -4,6 +4,18 @@
 
 เป้าหมายคือให้ระบบของคุณเรียก OTP ผ่าน API ได้ทันที โดยไม่ต้องพาผู้ใช้ไปเปิดเว็บ `otpverify.icashbank.com`
 
+## สรุปสั้น
+
+สิ่งที่ dev ต้องทำมีแค่นี้
+
+1. ตั้งค่า `X-API-Key` ให้ถูกต้องใน backend ของ iCloud Leasing
+2. เรียก `POST /api/v1/otp/request` เพื่อขอ OTP
+3. รับ OTP จากผู้ใช้ในหน้าของ iCloud Leasing เอง
+4. เรียก `POST /api/v1/otp/verify` เพื่อยืนยัน OTP
+5. ถ้าผ่าน ให้บันทึกสถานะ verified ในระบบของคุณต่อ
+
+ถ้าต้องการเก็บประวัติลูกค้าฝั่ง OTP Service ด้วย ให้ใช้ `POST /api/v1/customers`
+
 ---
 
 ## ภาพรวมการเชื่อมต่อ
@@ -27,6 +39,31 @@
 - OTP ที่ผู้ใช้กรอกกลับมา
 - รหัสอ้างอิงของรายการสมัครหรือ customer ID ถ้าต้องการบันทึกข้อมูลลูกค้า
 
+## URL ที่ใช้ได้
+
+ตัวอย่าง URL สำหรับทดสอบภายใน
+
+- Local: `http://127.0.0.1:8000`
+- Production: `https://otpverify.icashbank.com`
+
+ให้ dev เปลี่ยนตาม environment ที่ใช้งานจริงของคุณ
+
+## ค่าที่ต้องตั้งบนฝั่ง OTP Service
+
+ระบบ OTP Service ต้องมีค่าเหล่านี้ใน environment
+
+- `EXTERNAL_API_KEYS`
+- `EXTERNAL_API_HEADER_NAME` โดยปกติใช้ `X-API-Key`
+- `EXTERNAL_API_RATE_LIMIT` โดยปกติใช้ `60/minute`
+
+ตัวอย่าง:
+
+```env
+EXTERNAL_API_KEYS=key-one,key-two
+EXTERNAL_API_HEADER_NAME=X-API-Key
+EXTERNAL_API_RATE_LIMIT=60/minute
+```
+
 ---
 
 ## การยืนยันตัวตน
@@ -46,6 +83,7 @@ X-API-Key: your-secret-key
 - อย่าใส่ key ไว้ใน frontend
 - ให้ระบบ backend ของ iCloud Leasing เป็นคนเรียก API เท่านั้น
 - แยก key คนละชุดสำหรับ staging และ production
+- ถ้า production key หลุด ให้ rotate ทันที
 
 ---
 
@@ -120,6 +158,40 @@ sequenceDiagram
 | `PUT` | `/api/v1/customers/{customer_id}` | อัปเดตลูกค้าตาม id |
 | `DELETE` | `/api/v1/customers/{customer_id}` | ลบลูกค้า |
 
+## Response ที่ต้องรองรับในระบบ iCloud Leasing
+
+ให้ฝั่ง dev เตรียมรับ response เหล่านี้
+
+### `401 Unauthorized`
+
+เกิดจาก key ผิดหรือไม่ได้ส่ง
+
+```json
+{
+  "detail": "A valid API key is required."
+}
+```
+
+### `429 Too Many Requests`
+
+เกิดจากเรียกถี่เกิน
+
+```json
+{
+  "detail": "Too many OTP requests. Please wait a moment and try again."
+}
+```
+
+### `503 Service Unavailable`
+
+เกิดจากระบบยังไม่พร้อมใช้งาน หรือยังไม่เปิด external API
+
+```json
+{
+  "detail": "External API is not configured. Set EXTERNAL_API_KEYS to enable it."
+}
+```
+
 ---
 
 ## รายละเอียด Endpoint
@@ -177,6 +249,8 @@ Request body:
 }
 ```
 
+ถ้าเบอร์ผิด format หรือระบบไม่พร้อมใช้งาน ให้ฝั่ง dev พร้อมแสดง error message ที่รับกลับมาโดยตรง
+
 ### 3) `POST /api/v1/otp/verify`
 
 ใช้ยืนยัน OTP
@@ -199,6 +273,8 @@ Request body:
   "message": "OTP verified successfully."
 }
 ```
+
+ถ้า OTP ผิดให้ระบบของคุณแสดงข้อความล้มเหลวและให้ผู้ใช้ลองใหม่ได้ตาม policy ของ iCloud Leasing
 
 ### 4) `GET /api/v1/customers`
 
@@ -244,6 +320,12 @@ Request body:
 - ถ้า `id` ซ้ำ ระบบจะอัปเดตข้อมูลเดิม
 - ถ้า `id` ยังไม่มี ระบบจะสร้างใหม่
 - ถ้า `timestamp` ว่าง ระบบจะเติมเวลาให้เอง
+
+แนะนำให้ใช้ endpoint นี้เมื่อ:
+
+- ต้องการเก็บผลการ verify ไว้ตรวจสอบย้อนหลัง
+- ต้องการ sync customer record ไปยัง OTP Service
+- ต้องการใช้ OTP Service เป็นแหล่งข้อมูลกลาง
 
 ### 7) `PUT /api/v1/customers/{customer_id}`
 
@@ -372,6 +454,36 @@ EXTERNAL_API_KEYS=key-one,key-two
 EXTERNAL_API_HEADER_NAME=X-API-Key
 EXTERNAL_API_RATE_LIMIT=60/minute
 ```
+
+---
+
+## ขั้นตอนทำงานสำหรับ dev ฝั่ง iCloud Leasing
+
+### 1) ตั้งค่า config
+
+ให้ dev ใส่ค่า environment ของ backend ดังนี้
+
+```env
+OTP_API_BASE_URL=https://otpverify.icashbank.com
+OTP_API_KEY=your-secret-key
+OTP_API_HEADER_NAME=X-API-Key
+```
+
+### 2) เรียกขอ OTP
+
+ใช้ `OTP_API_BASE_URL + /api/v1/otp/request`
+
+### 3) รับ OTP จากผู้ใช้
+
+ให้ผู้ใช้กรอก OTP ในหน้าของ iCloud Leasing เอง
+
+### 4) ตรวจ OTP
+
+ใช้ `OTP_API_BASE_URL + /api/v1/otp/verify`
+
+### 5) บันทึกผล
+
+ถ้าผ่าน ให้ mark เป็น verified ภายในระบบ iCloud Leasing และไป step ถัดไป
 
 ---
 
